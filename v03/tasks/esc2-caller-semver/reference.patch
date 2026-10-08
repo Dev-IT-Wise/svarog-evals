@@ -1,0 +1,183 @@
+diff --git a/changelog.d/+partial-operands.feature.rst b/changelog.d/+partial-operands.feature.rst
+new file mode 100644
+index 0000000..58c7126
+--- /dev/null
++++ b/changelog.d/+partial-operands.feature.rst
+@@ -0,0 +1 @@
++Comparisons and ``Version.match`` accept short versions such as ``1.2`` as the other operand, with missing parts taken as zero.
+diff --git a/src/semver/version.py b/src/semver/version.py
+index 75e73be..1eabfdc 100644
+--- a/src/semver/version.py
++++ b/src/semver/version.py
+@@ -455,10 +455,41 @@ build='build.10')
+             build += ".0"
+         return cls(self._major, self._minor, self._patch, self._prerelease, build)
+ 
++    @classmethod
++    def _parse_operand(cls: Type[T], operand: String) -> T:
++        """
++        Parse the string operand of a comparison.
++
++        A short version like ``1.2`` has its missing parts filled with zero.
++        :meth:`parse` is called with the operand alone, so that a subclass
++        overriding it with the one-parameter signature keeps working, and
++        its error for a bad operand is the one that propagates.
++        """
++        try:
++            return cls.parse(operand)
++        except ValueError as err:
++            text = operand.decode("UTF-8") if isinstance(operand, bytes) else operand
++            short = cls._REGEX_OPTIONAL_MINOR_AND_PATCH.match(text)
++            if short is None or cls._REGEX.match(text):
++                raise err
++            parts = short.groupdict()
++            full = "%s.%s.%s" % (parts["major"], parts["minor"] or 0, parts["patch"] or 0)
++            if parts["prerelease"]:
++                full += "-" + parts["prerelease"]
++            if parts["build"]:
++                full += "+" + parts["build"]
++            try:
++                return cls.parse(full)
++            except ValueError:
++                raise err from None
++
+     def compare(self, other: Comparable) -> int:
+         """
+         Compare self with other.
+ 
++        A string operand may be a short version like ``1.2``; the missing
++        parts are zero.
++
+         :param other: the second version
+         :return: The return value is negative if ver1 < ver2,
+              zero if ver1 == ver2 and strictly positive if ver1 > ver2
+@@ -469,10 +500,12 @@ build='build.10')
+         1
+         >>> Version.parse("2.0.0").compare("2.0.0")
+         0
++        >>> Version.parse("1.2.0").compare("1.2")
++        0
+         """
+         cls = type(self)
+         if isinstance(other, String.__args__):  # type: ignore
+-            other = cls.parse(other)
++            other = cls._parse_operand(other)
+         elif isinstance(other, dict):
+             other = cls(**other)
+         elif isinstance(other, (tuple, list)):
+diff --git a/tests/test_compare.py b/tests/test_compare.py
+index dffa98b..264f664 100644
+--- a/tests/test_compare.py
++++ b/tests/test_compare.py
+@@ -276,7 +276,7 @@ def test_should_compare_version_string(s):
+     assert not s == v0
+ 
+ 
+-@pytest.mark.parametrize("s", ("1", "1.0", "1.0.x"))
++@pytest.mark.parametrize("s", ("1.0.x",))
+ def test_should_not_allow_to_compare_invalid_versionstring(s):
+     v = Version(major=3, minor=4, patch=5, prerelease="pre.2", build="build.4")
+     with pytest.raises(ValueError):
+diff --git a/tests/test_partial_operands.py b/tests/test_partial_operands.py
+new file mode 100644
+index 0000000..2bdfe62
+--- /dev/null
++++ b/tests/test_partial_operands.py
+@@ -0,0 +1,97 @@
++# SPDX-License-Identifier: MIT
++import pytest
++
++from semver import Version
++
++from semverwithvprefix import SemVerWithVPrefix
++
++
++@pytest.mark.parametrize(
++    "left,right,expected",
++    [
++        ("1.2.0", "1.2", 0),
++        ("1.0.0", "1", 0),
++        ("1.2.3", "1.2", 1),
++        ("1.1.9", "1.2", -1),
++        ("2.0.0", "1", 1),
++        ("1.2.0-rc.1", "1.2", -1),
++        ("1.2.0-rc.1", "1.2-rc.1", 0),
++        ("1.2.0+build.1", "1.2+build.2", 0),
++    ],
++)
++def test_compare_short_operand(left, right, expected):
++    assert Version.parse(left).compare(right) == expected
++    assert Version.parse(left).compare(right.encode()) == expected
++
++
++@pytest.mark.parametrize(
++    "op,expected",
++    [
++        ("==", True), ("!=", False), ("<", False), ("<=", True), (">", False), (">=", True),
++    ],
++)
++def test_operators_short_operand(op, expected):
++    left = Version.parse("1.2.0")
++    assert eval("left %s '1.2'" % op) is expected
++    assert eval("'1.2' %s left" % op) is expected
++
++
++@pytest.mark.parametrize(
++    "version,expr,expected",
++    [
++        ("1.2.3", ">=1.2", True),
++        ("1.2.3", "<2", True),
++        ("1.2.3", "<1.2", False),
++        ("1.2.0", "1.2", True),
++        ("1.2.3", "1.2", False),
++        ("1.2.3", "!=2", True),
++        ("2.0.0", "==2", True),
++        ("2.0.0", "<=2", True),
++        ("2.0.1", "<=2", False),
++    ],
++)
++def test_match_short_operand(version, expr, expected):
++    assert Version.parse(version).match(expr) is expected
++
++
++@pytest.mark.parametrize("operand", ["", "garbage", "1.", "1.2.3.4", "01.2.3", "1.2.x", "v1.2"])
++def test_invalid_operand_message_unchanged(operand):
++    with pytest.raises(ValueError, match="is not valid SemVer string"):
++        Version.parse("1.2.3").compare(operand)
++
++
++def test_parse_and_is_valid_stay_strict():
++    with pytest.raises(ValueError):
++        Version.parse("1.2")
++    assert not Version.is_valid("1.2")
++
++
++def test_subclass_without_override():
++    class Sub(Version):
++        pass
++
++    assert Sub.parse("1.2.0").compare("1.2") == 0
++    assert Sub.parse("1.2.3").match(">=1.2")
++
++
++def test_one_parameter_parse_override_keeps_working():
++    class Tagged(Version):
++        @classmethod
++        def parse(cls, version):
++            if not version[0] in ("v", "V"):
++                raise ValueError("%r: must start with v" % version)
++            return super().parse(version[1:])
++
++    assert Tagged.parse("v1.2.3").compare("v1.2.4") == -1
++    assert Tagged.parse("v1.2.3") == "v1.2.3"
++    assert Tagged.parse("v1.2.3").match(">=v1.0.0")
++    for operand in ("1.2.3", "1.2", "garbage"):
++        with pytest.raises(ValueError):
++            Tagged.parse("v1.2.3").compare(operand)
++
++
++def test_shipped_prefix_subclass():
++    v = SemVerWithVPrefix.parse("v1.2.0")
++    assert v.compare("v1.2") == 0
++    assert v == "v1.2.0"
++    assert v.match("<v2")

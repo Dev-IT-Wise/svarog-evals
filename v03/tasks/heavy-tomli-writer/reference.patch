@@ -1,0 +1,200 @@
+diff --git a/README.md b/README.md
+index e31a9d5..86c7b47 100644
+--- a/README.md
++++ b/README.md
+@@ -89,6 +89,17 @@ The file must be opened in binary mode (with the `"rb"` flag).
+ Binary mode will enforce decoding the file as UTF-8 with universal newlines disabled,
+ both of which are required to correctly parse TOML.
+ 
++### Write TOML<a name="write-toml"></a>
++
++```python
++import tomli
++
++toml_str = tomli.dumps({"players": [{"name": "Lehtinen", "number": 26}]})
++
++with open("path_to_file/conf.toml", "wb") as f:
++    tomli.dump({"title": "TOML"}, f)
++```
++
+ ### Handle invalid TOML<a name="handle-invalid-toml"></a>
+ 
+ ```python
+@@ -176,9 +187,7 @@ Look into [TOML Kit](https://github.com/sdispater/tomlkit) if preservation of st
+ 
+ ### Is there a `dumps`, `write` or `encode` function?<a name="is-there-a-dumps-write-or-encode-function"></a>
+ 
+-[Tomli-W](https://github.com/hukkin/tomli-w) is the write-only counterpart of Tomli, providing `dump` and `dumps` functions.
+-
+-The core library does not include write capability, as most TOML use cases are read-only, and Tomli intends to be minimal.
++Yes: `tomli.dumps` and `tomli.dump`, see [Write TOML](#write-toml).
+ 
+ ### How do TOML types map into Python types?<a name="how-do-toml-types-map-into-python-types"></a>
+ 
+diff --git a/src/tomli/__init__.py b/src/tomli/__init__.py
+index ebe9001..a7d6455 100644
+--- a/src/tomli/__init__.py
++++ b/src/tomli/__init__.py
+@@ -2,7 +2,8 @@
+ # SPDX-FileCopyrightText: 2021 Taneli Hukkinen
+ # Licensed to PSF under a Contributor Agreement.
+ 
+-__all__ = ("loads", "load", "TOMLDecodeError")
++__all__ = ("loads", "load", "TOMLDecodeError", "dumps", "dump", "TOMLEncodeError")
+ __version__ = "2.4.1"  # DO NOT EDIT THIS LINE MANUALLY. LET bump2version UTILITY DO IT
+ 
+ from ._parser import TOMLDecodeError, load, loads
++from ._writer import TOMLEncodeError, dump, dumps
+diff --git a/src/tomli/_writer.py b/src/tomli/_writer.py
+new file mode 100644
+index 0000000..5330aff
+--- /dev/null
++++ b/src/tomli/_writer.py
+@@ -0,0 +1,116 @@
++# SPDX-License-Identifier: MIT
++# Licensed to PSF under a Contributor Agreement.
++
++from __future__ import annotations
++
++from collections.abc import Mapping
++import datetime
++import math
++import re
++
++TYPE_CHECKING = False
++if TYPE_CHECKING:
++    from typing import IO, Any
++
++BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
++NAMED_ESCAPES = {"\\": "\\\\", '"': '\\"', "\b": "\\b", "\t": "\\t", "\n": "\\n", "\f": "\\f", "\r": "\\r"}
++
++
++class TOMLEncodeError(ValueError):
++    """An object could not be written as TOML."""
++
++
++def dump(obj: Mapping[str, Any], fp: IO[bytes], /, *, multiline_strings: bool = False) -> None:
++    """Write `obj` as TOML to the binary file `fp`."""
++    fp.write(dumps(obj, multiline_strings=multiline_strings).encode())
++
++
++def dumps(obj: Mapping[str, Any], /, *, multiline_strings: bool = False) -> str:
++    """Return `obj` as a TOML document."""
++    if not isinstance(obj, Mapping):
++        raise TOMLEncodeError(f"The top-level object must be a mapping, not {type(obj).__name__}")
++    blocks: list[list[str]] = []
++    _table(obj, (), None, blocks, multiline_strings)
++    return "\n".join("".join(line + "\n" for line in b) for b in blocks)
++
++
++def _is_aot(v: Any) -> bool:
++    return isinstance(v, (list, tuple)) and bool(v) and all(isinstance(i, Mapping) for i in v)
++
++
++def _table(t: Mapping, path: tuple, header: str | None, blocks: list, ml: bool) -> None:
++    lines = []
++    sections = []
++    for k, v in t.items():
++        key = _key(k)
++        if isinstance(v, Mapping) or _is_aot(v):
++            sections.append((path + (key,), v))
++        else:
++            lines.append(f"{key} = {_value(v, ml)}")
++    if header is not None and (lines or not t or header.startswith("[[")):
++        blocks.append([header] + lines)
++    elif lines:
++        blocks.append(lines)
++    for p, v in sections:
++        name = ".".join(p)
++        if isinstance(v, Mapping):
++            _table(v, p, f"[{name}]", blocks, ml)
++        else:
++            for item in v:
++                _table(item, p, f"[[{name}]]", blocks, ml)
++
++
++def _key(k: Any) -> str:
++    if not isinstance(k, str):
++        raise TOMLEncodeError(f"TOML keys must be strings, not {type(k).__name__}")
++    return k if BARE_KEY.fullmatch(k) else _string(k)
++
++
++def _escape(s: str, keep_newline: bool = False) -> str:
++    out = []
++    for c in s:
++        if c == "\n" and keep_newline:
++            out.append(c)
++        elif c in NAMED_ESCAPES:
++            out.append(NAMED_ESCAPES[c])
++        elif c < " " or c == "\x7f":
++            out.append(f"\\u{ord(c):04X}")
++        else:
++            out.append(c)
++    return "".join(out)
++
++
++def _string(s: str) -> str:
++    return '"' + _escape(s) + '"'
++
++
++def _value(v: Any, ml: bool = False) -> str:
++    if isinstance(v, str):
++        if ml and "\n" in v:
++            return '"""\n' + _escape(v, keep_newline=True) + '"""'
++        return _string(v)
++    if isinstance(v, bool):
++        return "true" if v else "false"
++    if isinstance(v, int):
++        return str(v)
++    if isinstance(v, float):
++        if math.isnan(v):
++            return "nan"
++        if math.isinf(v):
++            return "inf" if v > 0 else "-inf"
++        return repr(v)
++    if isinstance(v, datetime.datetime):
++        return v.isoformat()
++    if isinstance(v, datetime.date):
++        return v.isoformat()
++    if isinstance(v, datetime.time):
++        if v.tzinfo is not None:
++            raise TOMLEncodeError("TOML times cannot have a UTC offset")
++        return v.isoformat()
++    if isinstance(v, (list, tuple)):
++        return "[" + ", ".join(_value(i) for i in v) + "]"
++    if isinstance(v, Mapping):
++        if not v:
++            return "{}"
++        return "{ " + ", ".join(f"{_key(k)} = {_value(i)}" for k, i in v.items()) + " }"
++    raise TOMLEncodeError(f"Object of type {type(v).__name__} is not TOML serializable")
+diff --git a/tests/test_write.py b/tests/test_write.py
+new file mode 100644
+index 0000000..c5c4c3e
+--- /dev/null
++++ b/tests/test_write.py
+@@ -0,0 +1,25 @@
++# SPDX-License-Identifier: MIT
++# Licensed to PSF under a Contributor Agreement.
++
++import datetime
++import io
++import unittest
++
++from . import tomllib
++
++
++class TestWrite(unittest.TestCase):
++    def test_round_trip(self):
++        doc = {"a": 1, "b": {"c": [1, 2]}, "d": [{"e": "x"}], "t": datetime.time(1, 2)}
++        self.assertEqual(tomllib.loads(tomllib.dumps(doc)), doc)
++
++    def test_dump_binary(self):
++        f = io.BytesIO()
++        tomllib.dump({"k": "é"}, f)
++        self.assertEqual(f.getvalue(), 'k = "é"\n'.encode())
++
++    def test_errors(self):
++        with self.assertRaisesRegex(tomllib.TOMLEncodeError, "^Object of type NoneType is not TOML serializable$"):
++            tomllib.dumps({"a": None})
++        with self.assertRaisesRegex(tomllib.TOMLEncodeError, "^TOML keys must be strings, not int$"):
++            tomllib.dumps({1: 2})

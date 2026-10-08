@@ -1,0 +1,44 @@
+diff --git a/inflection/__init__.py b/inflection/__init__.py
+index ffac5ce..fc07e69 100644
+--- a/inflection/__init__.py
++++ b/inflection/__init__.py
+@@ -284,6 +284,14 @@ def parameterize(string: str, separator: str = '-') -> str:
+     return string.lower()
+ 
+ 
++def _inflect(word: str, rules: RegexReplaceList) -> str:
++    """Apply the first rule that matches ``word``; unchanged if none does."""
++    for rule, replacement in rules:
++        if re.search(rule, word):
++            return re.sub(rule, replacement, word)
++    return word
++
++
+ def pluralize(word: str) -> str:
+     """
+     Return the plural form of a word.
+@@ -302,11 +310,7 @@ def pluralize(word: str) -> str:
+     """
+     if not word or word.lower() in UNCOUNTABLES:
+         return word
+-    else:
+-        for rule, replacement in PLURALS:
+-            if re.search(rule, word):
+-                return re.sub(rule, replacement, word)
+-        return word
++    return _inflect(word, PLURALS)
+ 
+ 
+ def singularize(word: str) -> str:
+@@ -331,10 +335,7 @@ def singularize(word: str) -> str:
+         if re.search(r'(?i)\b(%s)\Z' % inflection, word):
+             return word
+ 
+-    for rule, replacement in SINGULARS:
+-        if re.search(rule, word):
+-            return re.sub(rule, replacement, word)
+-    return word
++    return _inflect(word, SINGULARS)
+ 
+ 
+ def tableize(word: str) -> str:

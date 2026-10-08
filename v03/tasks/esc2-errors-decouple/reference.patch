@@ -1,0 +1,114 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+new file mode 100644
+index 0000000..df8318d
+--- /dev/null
++++ b/CHANGELOG.md
+@@ -0,0 +1,5 @@
++# Changelog
++
++## Unreleased
++
++- Add Config.export and AutoConfig.export.
+diff --git a/decouple.py b/decouple.py
+index 9873fc9..bb1dda1 100644
+--- a/decouple.py
++++ b/decouple.py
+@@ -106,6 +106,28 @@ class Config(object):
+         """
+         return self.get(*args, **kwargs)
+ 
++    def export(self, schema):
++        """
++        Resolve every option of schema and set the missing ones in os.environ.
++        """
++        values = {}
++        missing = []
++        for name, options in schema.items():
++            try:
++                values[name] = self.get(name, **(options or {}))
++            except UndefinedValueError:
++                missing.append(name)
++
++        if missing:
++            raise UndefinedValueError(
++                '{} not found. Declare them as envvars or define default values.'.format(', '.join(missing)))
++
++        for name, value in values.items():
++            if name not in os.environ:
++                os.environ[name] = str(value)
++
++        return values
++
+ 
+ class RepositoryEmpty(object):
+     def __init__(self, source='', encoding=DEFAULT_ENCODING):
+@@ -247,6 +269,15 @@ class AutoConfig(object):
+ 
+         return self.config(*args, **kwargs)
+ 
++    def export(self, schema):
++        """
++        Like Config.export, with the config file found as __call__ finds it.
++        """
++        if not self.config:
++            self._load(self.search_path or self._caller_path())
++
++        return self.config.export(schema)
++
+ 
+ # A pré-instantiated AutoConfig to improve decouple's usability
+ # now just import config and start using with no configuration.
+diff --git a/tests/test_export.py b/tests/test_export.py
+new file mode 100644
+index 0000000..a9db0d5
+--- /dev/null
++++ b/tests/test_export.py
+@@ -0,0 +1,48 @@
++# coding: utf-8
++import os
++from unittest.mock import patch
++
++import pytest
++from decouple import AutoConfig, Config, UndefinedValueError
++
++
++@pytest.fixture(autouse=True)
++def clean_env():
++    with patch.dict(os.environ):
++        for key in [k for k in os.environ if k.startswith('EXP_')]:
++            del os.environ[key]
++        yield
++
++
++def test_export_returns_cast_values_and_sets_environment():
++    config = Config({'EXP_PORT': '80', 'EXP_ON': 'yes'})
++    out = config.export({'EXP_PORT': {'cast': int}, 'EXP_ON': {'cast': bool}, 'EXP_X': {'default': 'x'}})
++    assert out == {'EXP_PORT': 80, 'EXP_ON': True, 'EXP_X': 'x'}
++    assert os.environ['EXP_PORT'] == '80'
++    assert os.environ['EXP_ON'] == 'True'
++    assert os.environ['EXP_X'] == 'x'
++
++
++def test_export_keeps_existing_environment_value():
++    os.environ['EXP_ON'] = '1'
++    assert Config({}).export({'EXP_ON': {'cast': bool}}) == {'EXP_ON': True}
++    assert os.environ['EXP_ON'] == '1'
++
++
++def test_export_missing_options_raise_one_error_and_change_nothing():
++    before = dict(os.environ)
++    with pytest.raises(UndefinedValueError) as info:
++        Config({'EXP_A': '1'}).export({'EXP_A': None, 'EXP_B': None, 'EXP_C': None})
++    assert 'EXP_B' in str(info.value) and 'EXP_C' in str(info.value)
++    assert dict(os.environ) == before
++
++
++def test_export_cast_error_propagates():
++    with pytest.raises(ValueError):
++        Config({'EXP_N': 'abc'}).export({'EXP_N': {'cast': int}})
++
++
++def test_autoconfig_export(tmp_path):
++    (tmp_path / '.env').write_text('EXP_PORT=9\n')
++    assert AutoConfig(search_path=str(tmp_path)).export({'EXP_PORT': {'cast': int}}) == {'EXP_PORT': 9}
++    assert os.environ['EXP_PORT'] == '9'

@@ -1,0 +1,176 @@
+diff --git a/changelog.d/+version-range.feature.rst b/changelog.d/+version-range.feature.rst
+new file mode 100644
+index 0000000..5572463
+--- /dev/null
++++ b/changelog.d/+version-range.feature.rst
+@@ -0,0 +1 @@
++Add :class:`VersionRange` for npm-style version ranges such as ``^1.2.3``.
+diff --git a/src/semver/__init__.py b/src/semver/__init__.py
+index 19c88f7..111e643 100644
+--- a/src/semver/__init__.py
++++ b/src/semver/__init__.py
+@@ -28,6 +28,7 @@ from ._deprecated import (
+     main,
+ )
+ from .version import Version, VersionInfo
++from .ranges import VersionRange, InvalidRangeError
+ from .__about__ import (
+     __version__,
+     __author__,
+@@ -69,4 +70,6 @@ __all__ = [
+     "__description__",
+     "__maintainer_email__",
+     "SEMVER_SPEC_VERSION",
++    "VersionRange",
++    "InvalidRangeError",
+ ]
+diff --git a/src/semver/ranges.py b/src/semver/ranges.py
+new file mode 100644
+index 0000000..6258f28
+--- /dev/null
++++ b/src/semver/ranges.py
+@@ -0,0 +1,110 @@
++"""Version ranges such as ``^1.2.3`` or ``>=1.0.0, <2.0.0``."""
++
++from typing import Iterable, List, Optional, Tuple, Union
++
++from .version import Version
++
++_OPERATORS = (">=", "<=", "==", "!=", "^", "~", ">", "<")
++_CHECKS = {
++    ">=": lambda c: c >= 0,
++    "<=": lambda c: c <= 0,
++    ">": lambda c: c > 0,
++    "<": lambda c: c < 0,
++    "==": lambda c: c == 0,
++    "!=": lambda c: c != 0,
++}
++
++_Comparator = Tuple[str, Version]
++
++
++class InvalidRangeError(ValueError):
++    """A version range expression could not be parsed."""
++
++
++def _expand(op: str, v: Version) -> List[_Comparator]:
++    if op == "^":
++        if v.major:
++            upper = Version(v.major + 1)
++        elif v.minor:
++            upper = Version(0, v.minor + 1)
++        else:
++            upper = Version(0, 0, v.patch + 1)
++        return [(">=", v), ("<", upper)]
++    if op == "~":
++        return [(">=", v), ("<", Version(v.major, v.minor + 1))]
++    return [(op, v)]
++
++
++def _parse_comparator(text: str, expression: str) -> List[_Comparator]:
++    comp = text.strip()
++    if not comp:
++        raise InvalidRangeError("empty comparator in range %r" % expression)
++    op = next((o for o in _OPERATORS if comp.startswith(o)), "")
++    try:
++        version = Version.parse(comp[len(op):].strip())
++    except (ValueError, TypeError):
++        raise InvalidRangeError("invalid comparator %r in range %r" % (comp, expression)) from None
++    return _expand(op or "==", version)
++
++
++class VersionRange:
++    """A set of versions, written as an npm-style range expression.
++
++    >>> VersionRange("^1.2.3").contains("1.9.0")
++    True
++    """
++
++    def __init__(self, expression: str) -> None:
++        if not isinstance(expression, str):
++            raise TypeError("range expression must be a str, not %s" % type(expression).__name__)
++        if not expression.strip():
++            raise InvalidRangeError("empty range expression")
++        self.expression = expression
++        self._groups = [
++            [c for part in group.split(",") for c in _parse_comparator(part, expression)]
++            for group in expression.split("||")
++        ]
++
++    def __repr__(self) -> str:
++        return "VersionRange(%r)" % self.expression
++
++    def __str__(self) -> str:
++        return self.expression
++
++    def __contains__(self, version: Union[Version, str]) -> bool:
++        return self.contains(version)
++
++    def contains(self, version: Union[Version, str], *, include_prerelease: bool = False) -> bool:
++        """Whether `version` is in this range.
++
++        >>> VersionRange(">=1.0.0, <2.0.0").contains("2.0.0")
++        False
++        """
++        if isinstance(version, str):
++            version = Version.parse(version)
++        elif not isinstance(version, Version):
++            raise TypeError("expected Version or str, not %s" % type(version).__name__)
++        return any(self._group_contains(g, version, include_prerelease) for g in self._groups)
++
++    @staticmethod
++    def _group_contains(group: List[_Comparator], v: Version, include_prerelease: bool) -> bool:
++        if not all(_CHECKS[op](v.compare(bound)) for op, bound in group):
++            return False
++        if v.prerelease is None or include_prerelease:
++            return True
++        return any(b.prerelease is not None and b.to_tuple()[:3] == v.to_tuple()[:3] for _, b in group)
++
++    def max_satisfying(
++        self, versions: Iterable[Union[Version, str]], *, include_prerelease: bool = False
++    ) -> Optional[Version]:
++        """The highest of `versions` in this range, or None.
++
++        >>> VersionRange("~1.2.0").max_satisfying(["1.2.5", "1.3.0"])
++        Version(major=1, minor=2, patch=5, prerelease=None, build=None)
++        """
++        found = None
++        for v in versions:
++            v = Version.parse(v) if isinstance(v, str) else v
++            if self.contains(v, include_prerelease=include_prerelease) and (found is None or v > found):
++                found = v
++        return found
+diff --git a/tests/test_ranges.py b/tests/test_ranges.py
+new file mode 100644
+index 0000000..3fc90c7
+--- /dev/null
++++ b/tests/test_ranges.py
+@@ -0,0 +1,28 @@
++import pytest
++
++from semver import InvalidRangeError, Version, VersionRange
++
++
++@pytest.mark.parametrize(
++    "expression,version,expected",
++    [
++        ("^1.2.3", "1.9.9", True),
++        ("^1.2.3", "2.0.0", False),
++        ("~1.2.3", "1.3.0", False),
++        (">=1.0.0, <2.0.0 || 3.0.0", "3.0.0", True),
++        ("^1.2.3", "1.5.0-beta.1", False),
++        (">=1.2.3-alpha.3", "1.2.3-alpha.7", True),
++    ],
++)
++def test_contains(expression, version, expected):
++    assert VersionRange(expression).contains(version) is expected
++
++
++def test_max_satisfying():
++    assert VersionRange("^1.0.0").max_satisfying(["1.0.0", "1.4.0", "2.0.0"]) == Version(1, 4)
++
++
++@pytest.mark.parametrize("expression", ["", ">=1.0.0,", "^1.2"])
++def test_invalid(expression):
++    with pytest.raises(InvalidRangeError):
++        VersionRange(expression)

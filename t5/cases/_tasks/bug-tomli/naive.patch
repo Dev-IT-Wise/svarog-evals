@@ -1,0 +1,13 @@
+diff --git a/src/tomli/_parser.py b/src/tomli/_parser.py
+index b87c918..8f93840 100644
+--- a/src/tomli/_parser.py
++++ b/src/tomli/_parser.py
+@@ -476,7 +476,7 @@ def parse_key_value_pair(
+ def parse_key(src: str, pos: Pos) -> tuple[Pos, Key]:
+     pos, key_part = parse_key_part(src, pos)
+     key: Key = (key_part,)
+-    pos = skip_chars(src, pos, TOML_WS)
++    pos = skip_chars(src, pos, TOML_WS | {"\t"})
+     while True:
+         try:
+             char: str | None = src[pos]

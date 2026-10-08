@@ -1,0 +1,21 @@
+svarog-evals
+Copyright (c) 2026 Arkadiusz Grzelka
+
+The T5 evaluation fixtures vendor snapshots of third-party projects, each with
+its own licence file, used only as test material:
+
+- t5/cases/_tasks/bug-tomli/upstream/ - tomli,
+  Copyright (c) 2021 Taneli Hukkinen, MIT License. Its
+  tests/data/{valid,invalid}/_external/toml-test/ - toml-test,
+  Copyright (c) 2018 TOML authors, MIT License.
+- t5/cases/_tasks/feature-cachetools/upstream/ -
+  cachetools, Copyright (c) 2014-2026 Thomas Kemmer, MIT License.
+- t5/cases/_tasks/refactor-inflection/upstream/ -
+  inflection, Copyright (C) 2012-2020 Janne Vanhala, MIT License.
+- t5/cases/_tasks/r2-done-backoff/upstream/ - backoff,
+  Copyright (c) 2014 litl, LLC., MIT License.
+- t5/cases/_tasks/r2-scope-semver/upstream/ -
+  python-semver, Copyright (c) 2013 Konstantine Rybnikov, BSD 3-Clause
+  License.
+- t5/cases/_tasks/r2-vacuous-decouple/upstream/ -
+  python-decouple, Copyright (c) 2013 Henrique Bastos, MIT License.

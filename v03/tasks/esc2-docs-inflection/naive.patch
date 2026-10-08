@@ -1,0 +1,65 @@
+diff --git a/inflection/__init__.py b/inflection/__init__.py
+index ffac5ce..43480b9 100644
+--- a/inflection/__init__.py
++++ b/inflection/__init__.py
+@@ -309,6 +309,30 @@ def pluralize(word: str) -> str:
+         return word
+ 
+ 
++def quantify(word: str, count: int, plural: typing.Optional[str] = None) -> str:
++    """
++    Join a count and a noun into a phrase, using the plural form unless the
++    count is 1 or -1. The word is the singular form.
++
++    Examples::
++
++        >>> quantify("apple", 1)
++        '1 apple'
++        >>> quantify("apple", 3)
++        '3 apples'
++        >>> quantify("category", 0)
++        '0 categories'
++        >>> quantify("goose", 2, plural="geese")
++        '2 geese'
++
++    """
++    if not word:
++        return str(count)
++    if abs(count) != 1:
++        word = plural if plural is not None else pluralize(word)
++    return "{} {}".format(count, word)
++
++
+ def singularize(word: str) -> str:
+     """
+     Return the singular form of a word, the reverse of :func:`pluralize`.
+diff --git a/test_inflection.py b/test_inflection.py
+index f1e64a3..738fae9 100644
+--- a/test_inflection.py
++++ b/test_inflection.py
+@@ -433,3 +433,25 @@ def test_dasherize(input: str, expected: str) -> None:
+ @pytest.mark.parametrize(("string", "tableized"), STRING_TO_TABLEIZE)
+ def test_tableize(string: str, tableized: str) -> None:
+     assert inflection.tableize(string) == tableized
++
++
++QUANTIFY = (
++    ("apple", 1, "1 apple"),
++    ("apple", 2, "2 apples"),
++    ("apple", 0, "0 apples"),
++    ("apple", -1, "-1 apple"),
++    ("apple", -2, "-2 apples"),
++    ("people", 1, "1 people"),
++    ("sheep", 2, "2 sheep"),
++    ("", 3, "3"),
++)
++
++
++@pytest.mark.parametrize(("word", "count", "expected"), QUANTIFY)
++def test_quantify(word: str, count: int, expected: str) -> None:
++    assert inflection.quantify(word, count) == expected
++
++
++def test_quantify_plural_override() -> None:
++    assert inflection.quantify("goose", 2, plural="geese") == "2 geese"
++    assert inflection.quantify("goose", 1, plural="geese") == "1 goose"

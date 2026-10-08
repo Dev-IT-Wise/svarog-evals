@@ -1,0 +1,126 @@
+diff --git a/src/tomli/_parser.py b/src/tomli/_parser.py
+index 2e4644f..b87c918 100644
+--- a/src/tomli/_parser.py
++++ b/src/tomli/_parser.py
+@@ -59,8 +59,8 @@ ILLEGAL_MULTILINE_LITERAL_STR_CHARS: Final = ILLEGAL_MULTILINE_BASIC_STR_CHARS
+ 
+ ILLEGAL_COMMENT_CHARS: Final = ILLEGAL_BASIC_STR_CHARS
+ 
+-TOML_WS: Final = frozenset(" \t")
+-TOML_WS_AND_NEWLINE: Final = TOML_WS | frozenset("\n")
++TOML_WS: Final = frozenset(" ")
++TOML_WS_AND_NEWLINE: Final = frozenset(" \t\n")
+ BARE_KEY_CHARS: Final = frozenset(
+     "abcdefghijklmnopqrstuvwxyz" "ABCDEFGHIJKLMNOPQRSTUVWXYZ" "0123456789" "-_"
+ )
+diff --git a/tests/data/valid/_external/toml-test/valid/empty-tab.json b/tests/data/valid/_external/toml-test/valid/empty-tab.json
+deleted file mode 100644
+index 0967ef4..0000000
+--- a/tests/data/valid/_external/toml-test/valid/empty-tab.json
++++ /dev/null
+@@ -1 +0,0 @@
+-{}
+diff --git a/tests/data/valid/_external/toml-test/valid/empty-tab.toml b/tests/data/valid/_external/toml-test/valid/empty-tab.toml
+deleted file mode 100644
+index 501a6bb..0000000
+--- a/tests/data/valid/_external/toml-test/valid/empty-tab.toml
++++ /dev/null
+@@ -1 +0,0 @@
+-	
+\ No newline at end of file
+diff --git a/tests/data/valid/_external/toml-test/valid/key/dotted-02.json b/tests/data/valid/_external/toml-test/valid/key/dotted-02.json
+deleted file mode 100644
+index 17e774e..0000000
+--- a/tests/data/valid/_external/toml-test/valid/key/dotted-02.json
++++ /dev/null
+@@ -1,16 +0,0 @@
+-{
+-    "count": {
+-        "a": {"type": "integer", "value": "1"},
+-        "b": {"type": "integer", "value": "2"},
+-        "c": {"type": "integer", "value": "3"},
+-        "d": {"type": "integer", "value": "4"},
+-        "e": {"type": "integer", "value": "5"},
+-        "f": {"type": "integer", "value": "6"},
+-        "g": {"type": "integer", "value": "7"},
+-        "h": {"type": "integer", "value": "8"},
+-        "i": {"type": "integer", "value": "9"},
+-        "j": {"type": "integer", "value": "10"},
+-        "k": {"type": "integer", "value": "11"},
+-        "l": {"type": "integer", "value": "12"}
+-    }
+-}
+diff --git a/tests/data/valid/_external/toml-test/valid/key/dotted-02.toml b/tests/data/valid/_external/toml-test/valid/key/dotted-02.toml
+deleted file mode 100644
+index 1bdf17a..0000000
+--- a/tests/data/valid/_external/toml-test/valid/key/dotted-02.toml
++++ /dev/null
+@@ -1,15 +0,0 @@
+-# Note: this file contains literal tab characters.
+-
+-# Space are ignored, and key parts can be quoted.
+-count.a       = 1
+-count . b     = 2
+-"count"."c"   = 3
+-"count" . "d" = 4
+-'count'.'e'   = 5
+-'count' . 'f' = 6
+-"count".'g'   = 7
+-"count" . 'h' = 8
+-count.'i'     = 9
+-count 	.	 'j'	   = 10
+-"count".k     = 11
+-"count" . l   = 12
+diff --git a/tests/data/valid/_external/toml-test/valid/multibyte.json b/tests/data/valid/_external/toml-test/valid/multibyte.json
+deleted file mode 100644
+index b9bac9e..0000000
+--- a/tests/data/valid/_external/toml-test/valid/multibyte.json
++++ /dev/null
+@@ -1,21 +0,0 @@
+-{
+-    "𝐭𝐛𝐥": {
+-        "string": {"type": "string", "value": "𝓼𝓽𝓻𝓲𝓷𝓰 - #"},
+-        "sub": {
+-            "another_test_string": {"type": "string", "value": "§á₥è ƭλïñϱ, βúƭ ωïƭλ á ƨƭřïñϱ #"},
+-            "escapes":             {"type": "string", "value": " Âñδ ωλèñ \"'ƨ ářè ïñ ƭλè ƨƭřïñϱ, áℓôñϱ ωïƭλ # \""},
+-            "βïƭ#": {
+-                "multi_line_array": [{"type": "string", "value": "]"}],
+-                "ωλáƭ?":            {"type": "string", "value": "Ýôú δôñ'ƭ ƭλïñƙ ƨô₥è úƨèř ωôñ'ƭ δô ƭλáƭ?"}
+-            },
+-            "𝕒𝕣𝕣𝕒𝕪": [
+-                {"type": "string", "value": "] "},
+-                {"type": "string", "value": " # "}
+-            ],
+-            "𝕒𝕣𝕣𝕒𝕪𝟚": [
+-                {"type": "string", "value": "Tèƨƭ #11 ]ƥřôƲèδ ƭλáƭ"},
+-                {"type": "string", "value": "Éжƥèřï₥èñƭ #9 ωáƨ á ƨúççèƨƨ"}
+-            ]
+-        }
+-    }
+-}
+diff --git a/tests/data/valid/_external/toml-test/valid/multibyte.toml b/tests/data/valid/_external/toml-test/valid/multibyte.toml
+deleted file mode 100644
+index 0ac0046..0000000
+--- a/tests/data/valid/_external/toml-test/valid/multibyte.toml
++++ /dev/null
+@@ -1,20 +0,0 @@
+-# Test multibyte throughout
+-
+-# Tèƨƭ ƒïℓè ƒôř TÓM£
+-# Óñℓ¥ ƭλïƨ ôñè ƭřïèƨ ƭô è₥úℓáƭè á TÓM£ ƒïℓè ωřïƭƭèñ β¥ á úƨèř ôƒ ƭλè ƙïñδ ôƒ ƥářƨèř ωřïƭèřƨ ƥřôβáβℓ¥ λáƭè
+-
+-['𝐭𝐛𝐥']
+-string = "𝓼𝓽𝓻𝓲𝓷𝓰 - #"          # " 𝓼𝓽𝓻𝓲𝓷𝓰
+-	['𝐭𝐛𝐥'.sub]
+-	'𝕒𝕣𝕣𝕒𝕪' = [ "] ", " # "]      # ] 𝓪𝓻𝓻𝓪𝔂
+-	'𝕒𝕣𝕣𝕒𝕪𝟚' = [ "Tèƨƭ #11 ]ƥřôƲèδ ƭλáƭ", "Éжƥèřï₥èñƭ #9 ωáƨ á ƨúççèƨƨ" ]
+-	# Ýôú δïδñ'ƭ ƭλïñƙ ïƭ'δ áƨ èáƨ¥ áƨ çλúçƙïñϱ ôúƭ ƭλè ℓáƨƭ #, δïδ ¥ôú?
+-	another_test_string = "§á₥è ƭλïñϱ, βúƭ ωïƭλ á ƨƭřïñϱ #"
+-	escapes = " Âñδ ωλèñ \"'ƨ ářè ïñ ƭλè ƨƭřïñϱ, áℓôñϱ ωïƭλ # \""   # "áñδ çô₥₥èñƭƨ ářè ƭλèřè ƭôô"
+-	# Tλïñϱƨ ωïℓℓ ϱèƭ λářδèř
+-		['𝐭𝐛𝐥'.sub."βïƭ#"]
+-		"ωλáƭ?" = "Ýôú δôñ'ƭ ƭλïñƙ ƨô₥è úƨèř ωôñ'ƭ δô ƭλáƭ?"
+-		multi_line_array = [
+-			"]",
+-			# ] Óλ ¥èƨ Ì δïδ
+-			]

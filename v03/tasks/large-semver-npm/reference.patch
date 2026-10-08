@@ -1,0 +1,1098 @@
+diff --git a/changelog.d/+npm-ranges.feature.rst b/changelog.d/+npm-ranges.feature.rst
+new file mode 100644
+index 0000000..ae10e89
+--- /dev/null
++++ b/changelog.d/+npm-ranges.feature.rst
+@@ -0,0 +1 @@
++Add npm-style version ranges (``Range``, ``Comparator``, ``satisfies``) and the ``pysemver satisfies`` and ``pysemver max-satisfying`` subcommands.
+diff --git a/docs/usage/ranges.rst b/docs/usage/ranges.rst
+new file mode 100644
+index 0000000..7082bb8
+--- /dev/null
++++ b/docs/usage/ranges.rst
+@@ -0,0 +1,94 @@
++Matching versions against npm-style ranges
++==========================================
++
++A :class:`~semver.Range` uses the range syntax of npm. Comparators in one
++set are separated by spaces and must all match; sets are separated by
++``||`` and at least one must match:
++
++.. code-block:: python
++
++    >>> from semver import Range, satisfies
++    >>> satisfies("1.4.0", "^1.2")
++    True
++    >>> rng = Range("1.x || >=2.5.0")
++    >>> "2.4.0" in rng
++    False
++    >>> str(Range("^1.2"))
++    '>=1.2.0 <2.0.0-0'
++    >>> rng.max_satisfying(["1.0.0", "2.4.0", "3.1.0"])
++    Version(major=3, minor=1, patch=0, prerelease=None, build=None)
++    >>> Range(">1.2.3").min_version()
++    Version(major=1, minor=2, patch=4, prerelease=None, build=None)
++    >>> Range("^1.2").intersects("~1.9")
++    True
++
++Each shorthand expands to primitive comparators. The ``-0`` on an upper
++bound is the lowest prerelease, so the bound excludes that version's
++prereleases too.
++
++X-ranges
++    ``x``, ``X``, ``*`` or a missing part match anything in that place:
++    ``*`` is any version, ``1.x`` is ``>=1.0.0 <2.0.0-0`` and ``1.2`` is
++    ``>=1.2.0 <1.3.0-0``.
++
++Hyphen ranges
++    ``1.2.3 - 2.3.4`` is ``>=1.2.3 <=2.3.4``. A partial upper end accepts
++    everything it starts: ``1.2.3 - 2.3`` is ``>=1.2.3 <2.4.0-0``.
++
++Tilde ranges
++    Patch-level changes, or minor-level ones when no minor is given:
++    ``~1.2.3`` is ``>=1.2.3 <1.3.0-0`` and ``~1`` is ``>=1.0.0 <2.0.0-0``.
++
++Caret ranges
++    Changes that keep the left-most non-zero part: ``^1.2.3`` is
++    ``>=1.2.3 <2.0.0-0``, ``^0.2.3`` is ``>=0.2.3 <0.3.0-0`` and ``^0.0.3``
++    is ``>=0.0.3 <0.0.4-0``.
++
++Primitives
++    ``<``, ``<=``, ``>``, ``>=`` and ``=`` compare with one version:
++    ``>=1.2.3``. On a partial version they round to the whole range it
++    names: ``>1.2`` is ``>=1.3.0`` and ``<=1.2`` is ``<1.3.0-0``.
++
++An invalid expression raises :class:`~semver.InvalidRangeError`, a
++:class:`ValueError`.
++
++
++Prerelease versions
++-------------------
++
++By default a prerelease version such as ``1.2.3-alpha.7`` is only contained
++when a comparator of the same set has a prerelease on the same
++``major.minor.patch``. ``>1.2.3-alpha.3`` contains ``1.2.3-alpha.7`` but not
++``3.4.5-alpha.9``, and ``^1.2.3`` does not contain ``1.5.0-beta.1``.
++Pass ``include_prerelease=True`` to treat prereleases like any other
++version:
++
++.. code-block:: python
++
++    >>> satisfies("1.5.0-beta.1", "^1.2.3")
++    False
++    >>> satisfies("1.5.0-beta.1", "^1.2.3", include_prerelease=True)
++    True
++
++
++Command line
++------------
++
++``pysemver satisfies VERSION RANGE`` prints the version and exits 0 when the
++range contains it, and exits 1 without output when it does not:
++
++.. code-block:: console
++
++    $ pysemver satisfies 1.4.0 "^1.2"
++    1.4.0
++
++``pysemver max-satisfying RANGE VERSION [VERSION ...]`` prints the highest
++version the range contains, or exits 1 without output when there is none:
++
++.. code-block:: console
++
++    $ pysemver max-satisfying "~1.2" 1.2.0 1.2.9 1.3.0
++    1.2.9
++
++Both take ``--include-prerelease``. An invalid range or version prints
++``ERROR`` and the message on stderr and exits 2.
+diff --git a/src/semver/__init__.py b/src/semver/__init__.py
+index 19c88f7..8835d06 100644
+--- a/src/semver/__init__.py
++++ b/src/semver/__init__.py
+@@ -28,6 +28,7 @@ from ._deprecated import (
+     main,
+ )
+ from .version import Version, VersionInfo
++from .ranges import Range, Comparator, InvalidRangeError, satisfies
+ from .__about__ import (
+     __version__,
+     __author__,
+@@ -69,4 +70,8 @@ __all__ = [
+     "__description__",
+     "__maintainer_email__",
+     "SEMVER_SPEC_VERSION",
++    "Range",
++    "Comparator",
++    "InvalidRangeError",
++    "satisfies",
+ ]
+diff --git a/src/semver/cli.py b/src/semver/cli.py
+index 43e101e..cb024a2 100644
+--- a/src/semver/cli.py
++++ b/src/semver/cli.py
+@@ -15,6 +15,7 @@ import sys
+ from typing import cast, List, Optional
+ 
+ from .version import Version
++from .ranges import Range
+ from .__about__ import __version__
+ 
+ 
+@@ -83,6 +84,37 @@ def cmd_nextver(args: argparse.Namespace) -> str:
+     return str(version.next_version(args.part))
+ 
+ 
++def cmd_satisfies(args: argparse.Namespace) -> Optional[str]:
++    """
++    Subcommand: Checks if a version is in a range.
++
++    Synopsis: satisfies [--include-prerelease] <VERSION> <RANGE>
++
++    :param args: The parsed arguments
++    :return: the version if the range contains it, otherwise None
++    """
++    if Range(args.range).contains(
++        args.version, include_prerelease=args.include_prerelease
++    ):
++        return args.version
++    return None
++
++
++def cmd_max_satisfying(args: argparse.Namespace) -> Optional[str]:
++    """
++    Subcommand: Finds the highest version in a range.
++
++    Synopsis: max-satisfying [--include-prerelease] <RANGE> <VERSION>...
++
++    :param args: The parsed arguments
++    :return: the highest contained version, or None if there is none
++    """
++    found = Range(args.range).max_satisfying(
++        args.versions, include_prerelease=args.include_prerelease
++    )
++    return None if found is None else str(found)
++
++
+ def createparser() -> argparse.ArgumentParser:
+     """
+     Create an :class:`argparse.ArgumentParser` instance.
+@@ -133,6 +165,29 @@ def createparser() -> argparse.ArgumentParser:
+     parser_nextver.add_argument(
+         "part", help="One of 'major', 'minor', 'patch', or 'prerelease'"
+     )
++
++    # Create the satisfies subcommand
++    parser_satisfies = s.add_parser(
++        "satisfies", help="Prints the version if the range contains it"
++    )
++    parser_satisfies.set_defaults(func=cmd_satisfies)
++    parser_satisfies.add_argument("version", help="Version to test")
++    parser_satisfies.add_argument("range", help="Range to test against")
++
++    # Create the max-satisfying subcommand
++    parser_max = s.add_parser(
++        "max-satisfying", help="Prints the highest version the range contains"
++    )
++    parser_max.set_defaults(func=cmd_max_satisfying)
++    parser_max.add_argument("range", help="Range to test against")
++    parser_max.add_argument("versions", nargs="+", help="Versions to choose from")
++
++    for p in (parser_satisfies, parser_max):
++        p.add_argument(
++            "--include-prerelease",
++            action="store_true",
++            help="Treat prerelease versions like any other version",
++        )
+     return parser
+ 
+ 
+@@ -167,6 +222,9 @@ def main(cliargs: Optional[List[str]] = None) -> int:
+         result = process(args)
+         if result is not None:
+             print(result)
++        elif args.func in (cmd_satisfies, cmd_max_satisfying):
++            # No version matched the range
++            return 1
+         return 0
+ 
+     except (ValueError, TypeError) as err:
+diff --git a/src/semver/ranges.py b/src/semver/ranges.py
+new file mode 100644
+index 0000000..ea44f4d
+--- /dev/null
++++ b/src/semver/ranges.py
+@@ -0,0 +1,438 @@
++"""
++npm-style version ranges.
++
++A range such as ``^1.2``, ``1.x || >=2.5.0`` or ``1.2.3 - 2.3.4`` is parsed
++into sets of primitive :class:`Comparator` objects. A version is in the
++range when it passes every comparator of at least one set.
++"""
++
++import re
++from typing import Iterable, List, Optional, Tuple, Union
++
++from .version import Version
++
++_OPERATORS = ("<", "<=", ">", ">=", "=", "")
++
++_XR = r"(?:[xX*]|0|[1-9][0-9]*)"
++_PARTIAL = re.compile(
++    r"^v?(%s)(?:\.(%s)(?:\.(%s))?)?(-[0-9A-Za-z.-]*)?(\+[0-9A-Za-z.-]*)?$"
++    % (_XR, _XR, _XR)
++)
++_OPERATOR_SPACE = re.compile(r"(<=|>=|<|>|=|~|\^)\s+")
++_PRIMITIVE = re.compile(r"^(<=|>=|<|>|=)(.*)$")
++
++# A partial version: major, minor, patch (None for an X part) and prerelease.
++_Partial = Tuple[Optional[int], Optional[int], Optional[int], Optional[str]]
++
++
++class InvalidRangeError(ValueError):
++    """Raised when a range expression cannot be parsed."""
++
++
++class Comparator:
++    """One primitive comparison, such as ``>=1.2.0``; ``""`` matches any version."""
++
++    def __init__(self, operator: str, version: Optional[Version]) -> None:
++        """
++        Create a comparator.
++
++        :param operator: one of ``<``, ``<=``, ``>``, ``>=``, ``=`` or ``""``
++        :param version: the version to compare with, ``None`` for ``""``
++        :raises ValueError: if the operator is unknown
++        """
++        if operator not in _OPERATORS:
++            raise ValueError(f"unknown operator {operator!r}")
++        self.operator = operator
++        self.version = version
++
++    def test(self, version: Version) -> bool:
++        """
++        Whether ``version`` passes this comparison, ignoring prerelease rules.
++
++        :param version: the version to test
++        :return: True if it passes
++        """
++        op, v = self.operator, self.version
++        if op == "":
++            return True
++        if op == "=":
++            return version == v
++        if op == "<":
++            return version < v
++        if op == "<=":
++            return version <= v
++        if op == ">":
++            return version > v
++        return version >= v
++
++    def __str__(self) -> str:
++        """Return the comparator as text: ``>=1.2.0``, ``1.2.3`` or ``*``."""
++        if self.operator == "":
++            return "*"
++        if self.operator == "=":
++            return str(self.version)
++        return f"{self.operator}{self.version}"
++
++    def __repr__(self) -> str:
++        """Return ``Comparator(operator, version)``."""
++        return f"Comparator({self.operator!r}, {self.version!r})"
++
++    def __eq__(self, other: object) -> bool:
++        """Two comparators are equal when operator and version are equal."""
++        if not isinstance(other, Comparator):
++            return NotImplemented
++        return (self.operator, self.version) == (other.operator, other.version)
++
++    def __hash__(self) -> int:
++        """Hash by operator and version."""
++        return hash((self.operator, self.version))
++
++
++_ANY = Comparator("", None)
++_NOTHING = Comparator("<", Version(0, 0, 0, "0"))
++
++
++def _below(major: int, minor: int = 0, patch: int = 0) -> Comparator:
++    """``<M.m.p-0``: excludes ``M.m.p`` and all of its prereleases."""
++    return Comparator("<", Version(major, minor, patch, "0"))
++
++
++def _parse_partial(text: str, token: str, expr: str) -> _Partial:
++    """Parse a partial version; ``token`` and ``expr`` are for error messages."""
++    match = _PARTIAL.match(text)
++    if match is None:
++        raise InvalidRangeError(f"invalid comparator {token!r} in range {expr!r}")
++    raw = match.group(1, 2, 3)
++    pre, build = match.group(4, 5)
++    parts = [None if p is None or p in "xX*" else int(p) for p in raw]
++    for i in (1, 2):
++        if parts[i] is not None and parts[i - 1] is None:
++            raise InvalidRangeError(
++                f"invalid comparator {token!r} in range {expr!r}"
++            )
++    if (pre or build) and parts[2] is None:
++        raise InvalidRangeError(f"prerelease on a partial version in range {expr!r}")
++    if parts[2] is not None:
++        # Let Version apply SemVer's rules for prerelease and build.
++        full = "%d.%d.%d%s%s" % (parts[0], parts[1], parts[2], pre or "", build or "")
++        try:
++            pre = Version.parse(full).prerelease
++        except ValueError:
++            raise InvalidRangeError(
++                f"invalid comparator {token!r} in range {expr!r}"
++            ) from None
++    return parts[0], parts[1], parts[2], pre
++
++
++def _xrange(operator: str, partial: _Partial) -> List[Comparator]:
++    """Expand a primitive or a bare partial (operator ``"="``)."""
++    major, minor, patch, pre = partial
++    if patch is not None:
++        return [Comparator(operator, Version(major, minor, patch, pre))]
++    if major is None:
++        return [_NOTHING] if operator in ("<", ">") else [_ANY]
++    lower = Version(major, minor or 0, 0)
++    if minor is None:
++        upper = _below(major + 1)
++    else:
++        upper = _below(major, minor + 1)
++    if operator == "=":
++        return [Comparator(">=", lower), upper]
++    if operator == ">":
++        return [Comparator(">=", upper.version.replace(prerelease=None))]
++    if operator == ">=":
++        return [Comparator(">=", lower)]
++    if operator == "<":
++        return [Comparator("<", lower.replace(prerelease="0"))]
++    return [upper]
++
++
++def _tilde(partial: _Partial) -> List[Comparator]:
++    """Expand ``~partial``: patch-level changes, or minor if no minor is given."""
++    major, minor, patch, pre = partial
++    if major is None:
++        return [_ANY]
++    lower = Comparator(">=", Version(major, minor or 0, patch or 0, pre))
++    if minor is None:
++        return [lower, _below(major + 1)]
++    return [lower, _below(major, minor + 1)]
++
++
++def _caret(partial: _Partial) -> List[Comparator]:
++    """Expand ``^partial``: changes that keep the left-most non-zero part."""
++    major, minor, patch, pre = partial
++    if major is None:
++        return [_ANY]
++    lower = Comparator(">=", Version(major, minor or 0, patch or 0, pre))
++    if minor is None or major > 0:
++        return [lower, _below(major + 1)]
++    if patch is None or minor > 0:
++        return [lower, _below(0, minor + 1)]
++    return [lower, _below(0, 0, patch + 1)]
++
++
++def _hyphen(low: _Partial, high: _Partial) -> List[Comparator]:
++    """Expand ``low - high`` into an inclusive range."""
++    result = []
++    if low[0] is not None:
++        result.append(
++            Comparator(">=", Version(low[0], low[1] or 0, low[2] or 0, low[3]))
++        )
++    major, minor, patch, pre = high
++    if major is not None:
++        if minor is None:
++            result.append(_below(major + 1))
++        elif patch is None:
++            result.append(_below(major, minor + 1))
++        else:
++            result.append(Comparator("<=", Version(major, minor, patch, pre)))
++    return result or [_ANY]
++
++
++def _parse_set(text: str, expr: str) -> Tuple[Comparator, ...]:
++    """Parse one ``||`` alternative into its comparators."""
++    tokens = _OPERATOR_SPACE.sub(r"\1", text).split()
++    if not tokens:
++        return (_ANY,)
++    if "-" in tokens:
++        if len(tokens) != 3 or tokens[1] != "-":
++            raise InvalidRangeError(f"incomplete hyphen range in range {expr!r}")
++        comparators = _hyphen(
++            _parse_partial(tokens[0], tokens[0], expr),
++            _parse_partial(tokens[2], tokens[2], expr),
++        )
++    else:
++        comparators = []
++        for token in tokens:
++            if token[0] in "~^":
++                partial = _parse_partial(token[1:], token, expr)
++                comparators += _tilde(partial) if token[0] == "~" else _caret(partial)
++                continue
++            match = _PRIMITIVE.match(token)
++            operator, rest = match.groups() if match else ("=", token)
++            comparators += _xrange(operator, _parse_partial(rest, token, expr))
++    # As npm does: a set holding the null set is just that, duplicates go,
++    # and "*" is dropped when the set has other comparators.
++    if _NOTHING in comparators:
++        return (_NOTHING,)
++    unique = list(dict.fromkeys(comparators))
++    if len(unique) > 1 and _ANY in unique:
++        unique.remove(_ANY)
++    return tuple(unique)
++
++
++def _to_version(version: Union[Version, str]) -> Version:
++    """Return ``version`` as a Version, parsing a str."""
++    if isinstance(version, Version):
++        return version
++    if isinstance(version, str):
++        return Version.parse(version)
++    raise TypeError(f"expected Version or str, not {type(version).__name__}")
++
++
++def _set_contains(
++    comparators: Iterable[Comparator], version: Version, include_prerelease: bool
++) -> bool:
++    """Whether one set contains ``version``, with the prerelease rule."""
++    comparators = list(comparators)
++    if not all(c.test(version) for c in comparators):
++        return False
++    if not version.prerelease or include_prerelease:
++        return True
++    # An added "<V-0" upper bound can never let a prerelease of V through,
++    # so it needs no special case here.
++    return any(
++        c.version is not None
++        and c.version.prerelease
++        and c.version.to_tuple()[:3] == version.to_tuple()[:3]
++        for c in comparators
++    )
++
++
++def _successor(version: Version, exact: bool) -> Version:
++    """
++    The version right after ``version``.
++
++    With ``exact``, the true successor in SemVer order (``1.2.4-0`` after
++    ``1.2.3``); otherwise the one ``min_version`` uses (``1.2.4``).
++    """
++    if version.prerelease:
++        return version.replace(prerelease=version.prerelease + ".0", build=None)
++    return Version(version.major, version.minor, version.patch + 1, "0" if exact else None)
++
++
++class Range:
++    """An npm-style version range, such as ``^1.2`` or ``1.x || >=2.5.0``."""
++
++    def __init__(self, expression: str) -> None:
++        """
++        Parse a range expression.
++
++        :param expression: the range, for example ``>=1.0.0 <2.0.0``
++        :raises TypeError: if ``expression`` is not a str
++        :raises InvalidRangeError: if ``expression`` is invalid
++        """
++        if not isinstance(expression, str):
++            raise TypeError(
++                f"range expression must be a str, not {type(expression).__name__}"
++            )
++        self.expression = expression
++        self.sets = tuple(
++            _parse_set(part, expression) for part in expression.split("||")
++        )
++
++    def contains(
++        self, version: Union[Version, str], *, include_prerelease: bool = False
++    ) -> bool:
++        """
++        Whether the range contains ``version``.
++
++        :param version: a Version or a version string
++        :param include_prerelease: treat prereleases like any other version
++        :return: True if some set contains the version
++        :raises TypeError: if ``version`` is neither a Version nor a str
++        :raises ValueError: if ``version`` is an invalid version string
++        """
++        version = _to_version(version)
++        return any(_set_contains(s, version, include_prerelease) for s in self.sets)
++
++    def __contains__(self, version: Union[Version, str]) -> bool:
++        """``version in rng`` is ``rng.contains(version)``."""
++        return self.contains(version)
++
++    def filter(
++        self,
++        versions: Iterable[Union[Version, str]],
++        *,
++        include_prerelease: bool = False,
++    ) -> List[Version]:
++        """
++        Return the contained versions, in input order, duplicates kept.
++
++        :param versions: Versions or version strings
++        :param include_prerelease: treat prereleases like any other version
++        :return: the contained versions as Version objects
++        """
++        result = []
++        for item in versions:
++            version = _to_version(item)
++            if self.contains(version, include_prerelease=include_prerelease):
++                result.append(version)
++        return result
++
++    def max_satisfying(
++        self,
++        versions: Iterable[Union[Version, str]],
++        *,
++        include_prerelease: bool = False,
++    ) -> Optional[Version]:
++        """
++        Return the highest contained version, or None.
++
++        :param versions: Versions or version strings
++        :param include_prerelease: treat prereleases like any other version
++        :return: the highest contained version, None if there is none
++        """
++        found = self.filter(versions, include_prerelease=include_prerelease)
++        return max(found) if found else None
++
++    def min_satisfying(
++        self,
++        versions: Iterable[Union[Version, str]],
++        *,
++        include_prerelease: bool = False,
++    ) -> Optional[Version]:
++        """
++        Return the lowest contained version, or None.
++
++        :param versions: Versions or version strings
++        :param include_prerelease: treat prereleases like any other version
++        :return: the lowest contained version, None if there is none
++        """
++        found = self.filter(versions, include_prerelease=include_prerelease)
++        return min(found) if found else None
++
++    def min_version(self) -> Optional[Version]:
++        """
++        Return the lowest version the range allows, prereleases included.
++
++        The candidates are ``0.0.0``, every comparator's version and, for
++        every ``>V``, the version right after ``V``.
++
++        :return: the lowest contained candidate, None if there is none
++        """
++        candidates = [Version(0, 0, 0)]
++        for comparators in self.sets:
++            for c in comparators:
++                if c.version is not None:
++                    candidates.append(c.version)
++                    if c.operator == ">":
++                        candidates.append(_successor(c.version, exact=False))
++        found = [v for v in candidates if self.contains(v, include_prerelease=True)]
++        return min(found) if found else None
++
++    def intersects(self, other: Union["Range", str]) -> bool:
++        """
++        Whether some version, prereleases included, is in both ranges.
++
++        :param other: a Range or a range expression
++        :return: True if the ranges overlap
++        :raises TypeError: if ``other`` is neither a Range nor a str
++        """
++        if isinstance(other, str):
++            other = Range(other)
++        elif not isinstance(other, Range):
++            raise TypeError(f"expected Range or str, not {type(other).__name__}")
++        for mine in self.sets:
++            for theirs in other.sets:
++                both = mine + theirs
++                # The lowest version both sets allow, if any, is one of these.
++                candidates = [Version(0, 0, 0, "0")]
++                for c in both:
++                    if c.version is not None:
++                        candidates.append(c.version)
++                        if c.operator == ">":
++                            candidates.append(_successor(c.version, exact=True))
++                if any(all(c.test(v) for c in both) for v in candidates):
++                    return True
++        return False
++
++    def __str__(self) -> str:
++        """Return the normalised range, for example ``>=1.2.0 <2.0.0-0``."""
++        return " || ".join(" ".join(str(c) for c in s) for s in self.sets)
++
++    def __repr__(self) -> str:
++        """Return ``Range('<expression>')``."""
++        return f"Range({self.expression!r})"
++
++    def __eq__(self, other: object) -> bool:
++        """Two ranges are equal when their sets are equal."""
++        if not isinstance(other, Range):
++            return NotImplemented
++        return self.sets == other.sets
++
++    def __hash__(self) -> int:
++        """Hash by the parsed sets."""
++        return hash(self.sets)
++
++
++def satisfies(
++    version: Union[Version, str],
++    range_expr: Union[Range, str],
++    *,
++    include_prerelease: bool = False,
++) -> bool:
++    """
++    Whether ``version`` is in the range ``range_expr``.
++
++    :param version: a Version or a version string
++    :param range_expr: a Range or a range expression
++    :param include_prerelease: treat prereleases like any other version
++    :return: True if the range contains the version
++
++    >>> satisfies("1.4.0", "^1.2")
++    True
++    """
++    if not isinstance(range_expr, Range):
++        range_expr = Range(range_expr)
++    return range_expr.contains(version, include_prerelease=include_prerelease)
+diff --git a/tests/test_pysemver-cli.py b/tests/test_pysemver-cli.py
+index 5a0a2f8..be6198a 100644
+--- a/tests/test_pysemver-cli.py
++++ b/tests/test_pysemver-cli.py
+@@ -142,3 +142,52 @@ def test_main_file_should_call_cli_main(package_name):
+         with patch("semver.__main__.__package__", package_name):
+             __main__.main()
+             mocked_main.assert_called_once()
++
++
++@pytest.mark.parametrize(
++    "cli,code,out",
++    [
++        (["satisfies", "1.4.0", "^1.2"], 0, "1.4.0"),
++        (["satisfies", "2.0.0", "^1.2"], 1, ""),
++        (["satisfies", "1.3.0-rc.1", "^1.2"], 1, ""),
++        (["satisfies", "--include-prerelease", "1.3.0-rc.1", "^1.2"], 0, "1.3.0-rc.1"),
++        (["satisfies", "1.0.0", "1.x || >=2.5.0"], 0, "1.0.0"),
++        (["max-satisfying", "~1.2", "1.2.0", "1.2.9", "1.3.0"], 0, "1.2.9"),
++        (["max-satisfying", "~1.2", "1.3.0", "0.9.0"], 1, ""),
++        (["max-satisfying", "^1", "1.0.0", "1.9.0-rc.1"], 0, "1.0.0"),
++        (
++            ["max-satisfying", "--include-prerelease", "^1", "1.0.0", "1.9.0-rc.1"],
++            0,
++            "1.9.0-rc.1",
++        ),
++    ],
++)
++def test_range_subcommands(capsys, cli, code, out):
++    assert main(cli) == code
++    captured = capsys.readouterr()
++    assert captured.out.rstrip() == out
++    assert not captured.err
++
++
++@pytest.mark.parametrize(
++    "cli,message",
++    [
++        (["satisfies", "1.0.0", "=>1"], "invalid comparator '=>1' in range '=>1'"),
++        (["satisfies", "1.0", "^1"], "1.0 is not valid SemVer string"),
++        (
++            ["max-satisfying", "1.2-beta", "1.2.0"],
++            "prerelease on a partial version in range '1.2-beta'",
++        ),
++        (["max-satisfying", "^1", "1.0.0", "x"], "x is not valid SemVer string"),
++    ],
++)
++def test_range_subcommands_report_errors(capsys, cli, message):
++    assert main(cli) == 2
++    captured = capsys.readouterr()
++    assert not captured.out
++    assert captured.err.rstrip() == "ERROR " + message
++
++
++def test_max_satisfying_needs_a_version():
++    with pytest.raises(SystemExit):
++        main(["max-satisfying", "^1"])
+diff --git a/tests/test_ranges.py b/tests/test_ranges.py
+new file mode 100644
+index 0000000..5aefeba
+--- /dev/null
++++ b/tests/test_ranges.py
+@@ -0,0 +1,373 @@
++import pytest
++
++import semver
++from semver import Comparator, InvalidRangeError, Range, Version, satisfies
++
++
++def test_public_names_end_all():
++    assert semver.__all__[-4:] == [
++        "Range",
++        "Comparator",
++        "InvalidRangeError",
++        "satisfies",
++    ]
++    assert issubclass(InvalidRangeError, ValueError)
++
++
++@pytest.mark.parametrize(
++    "expression,expanded",
++    [
++        ("*", "*"),
++        ("x", "*"),
++        ("X", "*"),
++        ("", "*"),
++        ("   ", "*"),
++        ("1", ">=1.0.0 <2.0.0-0"),
++        ("1.x", ">=1.0.0 <2.0.0-0"),
++        ("1.x.x", ">=1.0.0 <2.0.0-0"),
++        ("1.*.*", ">=1.0.0 <2.0.0-0"),
++        ("1.2", ">=1.2.0 <1.3.0-0"),
++        ("1.2.x", ">=1.2.0 <1.3.0-0"),
++        ("1.2.3", "1.2.3"),
++        ("1.2.3 - 2.3.4", ">=1.2.3 <=2.3.4"),
++        ("1.2 - 2.3.4", ">=1.2.0 <=2.3.4"),
++        ("1.2.3 - 2.3", ">=1.2.3 <2.4.0-0"),
++        ("1.2.3 - 2", ">=1.2.3 <3.0.0-0"),
++        ("~1.2.3", ">=1.2.3 <1.3.0-0"),
++        ("~1.2", ">=1.2.0 <1.3.0-0"),
++        ("~1", ">=1.0.0 <2.0.0-0"),
++        ("~0.2.3", ">=0.2.3 <0.3.0-0"),
++        ("^1.2.3", ">=1.2.3 <2.0.0-0"),
++        ("^0.2.3", ">=0.2.3 <0.3.0-0"),
++        ("^0.0.3", ">=0.0.3 <0.0.4-0"),
++        ("^1.2.x", ">=1.2.0 <2.0.0-0"),
++        ("^0.0.x", ">=0.0.0 <0.1.0-0"),
++        ("^0.0", ">=0.0.0 <0.1.0-0"),
++        ("^1.x", ">=1.0.0 <2.0.0-0"),
++        ("^0.x", ">=0.0.0 <1.0.0-0"),
++        (">1", ">=2.0.0"),
++        (">1.2", ">=1.3.0"),
++        (">=1.2", ">=1.2.0"),
++        ("<1.2", "<1.2.0-0"),
++        ("<=1.2", "<1.3.0-0"),
++        (">*", "<0.0.0-0"),
++        ("<*", "<0.0.0-0"),
++        (">=*", "*"),
++        ("<=*", "*"),
++        ("~1.2.3-beta.2", ">=1.2.3-beta.2 <1.3.0-0"),
++        ("^1.2.3-beta.2", ">=1.2.3-beta.2 <2.0.0-0"),
++        # primitives on full versions, prefixes, spacing, build metadata
++        (">1.2.3", ">1.2.3"),
++        ("<=1.2.3", "<=1.2.3"),
++        ("=1.2.3", "1.2.3"),
++        ("v1.2.3", "1.2.3"),
++        (">=v1.2.3", ">=1.2.3"),
++        (">= 1.2.3   < 2", ">=1.2.3 <2.0.0-0"),
++        ("  ^ 1.2  ", ">=1.2.0 <2.0.0-0"),
++        ("1.2.3+build.5", "1.2.3"),
++        (">=1.2.3-rc.1+build.5", ">=1.2.3-rc.1"),
++        ("1.2.3 - 2.3.4+build", ">=1.2.3 <=2.3.4"),
++        # sets
++        ("1.x || >=2.5.0", ">=1.0.0 <2.0.0-0 || >=2.5.0"),
++        ("1.2.3 || ", "1.2.3 || *"),
++        ("||", "* || *"),
++        ("* - *", "*"),
++        ("1.2.3 - *", ">=1.2.3"),
++        # within a set, npm's normalisation
++        ("* 1.2.3", "1.2.3"),
++        ("1.2.3 1.2.3", "1.2.3"),
++        (">* 1.2.3", "<0.0.0-0"),
++    ],
++)
++def test_should_expand(expression, expanded):
++    assert str(Range(expression)) == expanded
++
++
++def test_sets_are_tuples_of_comparators():
++    rng = Range("^1.2 || 3.0.0")
++    assert rng.sets == (
++        (Comparator(">=", Version(1, 2, 0)), Comparator("<", Version(2, 0, 0, "0"))),
++        (Comparator("=", Version(3, 0, 0)),),
++    )
++    assert Range("*").sets == ((Comparator("", None),),)
++    assert rng.expression == "^1.2 || 3.0.0"
++
++
++@pytest.mark.parametrize(
++    "expression,message",
++    [
++        ("=>1.0.0", "invalid comparator '=>1.0.0' in range '=>1.0.0'"),
++        ("1.2.3.4", "invalid comparator '1.2.3.4' in range '1.2.3.4'"),
++        ("01.2.3", "invalid comparator '01.2.3' in range '01.2.3'"),
++        ("1.x.3", "invalid comparator '1.x.3' in range '1.x.3'"),
++        ("^", "invalid comparator '^' in range '^'"),
++        ("~", "invalid comparator '~' in range '~'"),
++        ("1.2.3-01", "invalid comparator '1.2.3-01' in range '1.2.3-01'"),
++        ("1.2.3-", "invalid comparator '1.2.3-' in range '1.2.3-'"),
++        ("~>1.2", "invalid comparator '~>1.2' in range '~>1.2'"),
++        (
++            ">=1.0.0 foo || 2",
++            "invalid comparator 'foo' in range '>=1.0.0 foo || 2'",
++        ),
++        ("1.2-beta", "prerelease on a partial version in range '1.2-beta'"),
++        ("^1-rc.1", "prerelease on a partial version in range '^1-rc.1'"),
++        ("1.x.x-beta", "prerelease on a partial version in range '1.x.x-beta'"),
++        ("1.2+build", "prerelease on a partial version in range '1.2+build'"),
++        ("1.2.3 -", "incomplete hyphen range in range '1.2.3 -'"),
++        ("- 2.0.0", "incomplete hyphen range in range '- 2.0.0'"),
++        ("1 - 2 - 3", "incomplete hyphen range in range '1 - 2 - 3'"),
++    ],
++)
++def test_should_reject_invalid_expression(expression, message):
++    with pytest.raises(InvalidRangeError) as err:
++        Range(expression)
++    assert str(err.value) == message
++
++
++@pytest.mark.parametrize("expression", [1, None, b"1.2.3", ["1.2.3"]])
++def test_range_requires_a_str(expression):
++    with pytest.raises(TypeError) as err:
++        Range(expression)
++    assert str(err.value) == (
++        "range expression must be a str, not %s" % type(expression).__name__
++    )
++
++
++@pytest.mark.parametrize(
++    "version,expression,expected",
++    [
++        ("1.2.3", "1.2.3", True),
++        ("1.2.4", "1.2.3", False),
++        ("1.2.3+build", "1.2.3", True),
++        ("1.9.9", "^1.2", True),
++        ("2.0.0", "^1.2", False),
++        ("1.1.9", "^1.2", False),
++        ("1.2.9", "~1.2.3", True),
++        ("1.3.0", "~1.2.3", False),
++        ("2.3.4", "1.2.3 - 2.3.4", True),
++        ("2.3.5", "1.2.3 - 2.3.4", False),
++        ("3.0.0", "1.x || >=2.5.0", True),
++        ("2.4.0", "1.x || >=2.5.0", False),
++        ("0.0.0", "", True),
++        ("1.0.0", ">*", False),
++        # the prerelease rule
++        ("1.2.3-alpha.7", ">1.2.3-alpha.3", True),
++        ("3.4.5-alpha.9", ">1.2.3-alpha.3", False),
++        ("1.5.0-beta.1", "^1.2.3", False),
++        ("2.0.0-rc.1", "^1.2.3", False),
++        ("1.5.0-beta.1", "1.x", False),
++        ("2.0.0-0", "1.x", False),
++        ("1.2.3-beta.3", "^1.2.3-beta.2", True),
++        ("1.2.4-beta.3", "^1.2.3-beta.2", False),
++        ("1.2.3-beta.1", "^1.2.3-beta.2", False),
++        ("1.2.3-rc.1", "*", False),
++    ],
++)
++def test_contains(version, expression, expected):
++    rng = Range(expression)
++    assert rng.contains(version) is expected
++    assert rng.contains(Version.parse(version)) is expected
++    assert (version in rng) is expected
++    assert satisfies(version, expression) is expected
++    assert satisfies(version, rng) is expected
++
++
++@pytest.mark.parametrize(
++    "version,expression,expected",
++    [
++        ("1.5.0-beta.1", "^1.2.3", True),
++        ("2.0.0-rc.1", "^1.2.3", False),
++        ("3.4.5-alpha.9", ">1.2.3-alpha.3", True),
++        ("1.2.3-rc.1", "*", True),
++        ("2.0.0-0", "1.x", False),
++    ],
++)
++def test_contains_with_include_prerelease(version, expression, expected):
++    assert Range(expression).contains(version, include_prerelease=True) is expected
++    assert satisfies(version, expression, include_prerelease=True) is expected
++
++
++def test_contains_propagates_invalid_version():
++    with pytest.raises(ValueError, match="not valid SemVer"):
++        Range("*").contains("1.2")
++
++
++@pytest.mark.parametrize("version", [1, None, 1.5])
++def test_contains_rejects_other_types(version):
++    with pytest.raises(TypeError) as err:
++        Range("*").contains(version)
++    assert str(err.value) == "expected Version or str, not %s" % type(version).__name__
++
++
++def test_contains_accepts_version_subclass():
++    class SubVersion(Version):
++        pass
++
++    assert Range("^1").contains(SubVersion(1, 5, 0))
++
++
++VERSIONS = ["1.0.0", "1.2.3", "1.9.0-rc.1", "1.5.0", "2.0.0", "1.2.3"]
++
++
++@pytest.mark.parametrize(
++    "expression,include_prerelease,highest,lowest,filtered",
++    [
++        ("^1.2", False, "1.5.0", "1.2.3", ["1.2.3", "1.5.0", "1.2.3"]),
++        (
++            "^1.2",
++            True,
++            "1.9.0-rc.1",
++            "1.2.3",
++            ["1.2.3", "1.9.0-rc.1", "1.5.0", "1.2.3"],
++        ),
++        (">=2", False, "2.0.0", "2.0.0", ["2.0.0"]),
++        ("3.x", False, None, None, []),
++    ],
++)
++def test_max_min_filter(expression, include_prerelease, highest, lowest, filtered):
++    rng = Range(expression)
++    opts = {"include_prerelease": include_prerelease}
++    expected_max = None if highest is None else Version.parse(highest)
++    expected_min = None if lowest is None else Version.parse(lowest)
++    assert rng.max_satisfying(VERSIONS, **opts) == expected_max
++    assert rng.min_satisfying(VERSIONS, **opts) == expected_min
++    result = rng.filter(VERSIONS, **opts)
++    assert result == [Version.parse(v) for v in filtered]
++    assert all(isinstance(v, Version) for v in result)
++
++
++def test_max_satisfying_accepts_versions():
++    result = Range("^1").max_satisfying([Version(1, 0, 0), "1.1.0"])
++    assert result == Version(1, 1, 0)
++    assert isinstance(result, Version)
++
++
++@pytest.mark.parametrize(
++    "expression,expected",
++    [
++        (">=1.2.3", "1.2.3"),
++        (">1.2.3", "1.2.4"),
++        (">1.2.3-alpha", "1.2.3-alpha.0"),
++        ("*", "0.0.0"),
++        ("<2.0.0", "0.0.0"),
++        ("^1.2", "1.2.0"),
++        ("^1.2.3-beta.2", "1.2.3-beta.2"),
++        (">=2.0.0 || ^1.5", "1.5.0"),
++        ("1.2.3", "1.2.3"),
++        (">2.0.0 <1.0.0", None),
++        (">*", None),
++    ],
++)
++def test_min_version(expression, expected):
++    expected = None if expected is None else Version.parse(expected)
++    assert Range(expression).min_version() == expected
++
++
++@pytest.mark.parametrize(
++    "left,right,expected",
++    [
++        ("^1.2", "1.5.x", True),
++        ("^1.2", "^2", False),
++        ("1.x", ">=1.9.0 <3", True),
++        (">=1.0.0 <2.0.0", ">=2.0.0", False),
++        ("<=2.0.0", ">=2.0.0", True),
++        ("<2.0.0", ">=2.0.0", False),
++        ("1.2.3", "~1.2", True),
++        ("1.2.3", "1.2.4", False),
++        ("^3 || 1.x", "~1.4", True),
++        ("*", "<0.0.0", True),
++        ("<0.0.0", ">=0.0.0", False),
++        (">*", "*", False),
++        (">1.2.3", "<1.2.4", True),
++        (">1.2.3", "<1.2.4-0", False),
++        (">1.2.3-rc.1", "<1.2.3-rc.1.0", False),
++        (">1.2.3-rc.1", "<=1.2.3-rc.1.0", True),
++        ("^1.2.3", "1.5.0-beta.1", True),
++    ],
++)
++def test_intersects(left, right, expected):
++    assert Range(left).intersects(right) is expected
++    assert Range(right).intersects(Range(left)) is expected
++
++
++@pytest.mark.parametrize("other", [1, None])
++def test_intersects_rejects_other_types(other):
++    with pytest.raises(TypeError) as err:
++        Range("*").intersects(other)
++    assert str(err.value) == "expected Range or str, not %s" % type(other).__name__
++
++
++def test_range_repr_str_eq_hash():
++    rng = Range(">=1.0.0 <2.0.0")
++    assert repr(rng) == "Range('>=1.0.0 <2.0.0')"
++    assert str(Range("^1.2")) == ">=1.2.0 <2.0.0-0"
++    assert Range("^1.2") == Range(">=1.2.0 <2.0.0-0")
++    assert Range("1.x") == Range("~1")
++    assert Range("^1") != Range("^2")
++    assert Range("*") != "*"
++    assert len({Range("^1.2"), Range(">=1.2.0 <2.0.0-0"), Range("^2")}) == 2
++
++
++@pytest.mark.parametrize(
++    "operator,version,text",
++    [
++        (">=", Version(1, 2, 0), ">=1.2.0"),
++        ("<", Version(2, 0, 0, "0"), "<2.0.0-0"),
++        ("<=", Version(1, 2, 3), "<=1.2.3"),
++        (">", Version(1, 2, 3), ">1.2.3"),
++        ("=", Version(1, 2, 3), "1.2.3"),
++        ("", None, "*"),
++    ],
++)
++def test_comparator_str(operator, version, text):
++    comparator = Comparator(operator, version)
++    assert str(comparator) == text
++    assert comparator.operator == operator
++    assert comparator.version is version
++
++
++@pytest.mark.parametrize(
++    "operator,version,candidate,expected",
++    [
++        ("<", "2.0.0", "1.9.9", True),
++        ("<", "2.0.0", "2.0.0", False),
++        ("<=", "2.0.0", "2.0.0", True),
++        ("<=", "2.0.0", "2.0.1", False),
++        (">", "1.0.0", "1.0.1", True),
++        (">", "1.0.0", "1.0.0", False),
++        (">=", "1.0.0", "1.0.0", True),
++        (">=", "1.0.0", "0.9.0", False),
++        ("=", "1.0.0", "1.0.0+build.2", True),
++        ("=", "1.0.0", "1.0.1", False),
++        # test knows nothing about the prerelease rule
++        ("<", "2.0.0", "1.5.0-beta", True),
++    ],
++)
++def test_comparator_test(operator, version, candidate, expected):
++    comparator = Comparator(operator, Version.parse(version))
++    assert comparator.test(Version.parse(candidate)) is expected
++
++
++def test_any_comparator_matches_everything():
++    assert Comparator("", None).test(Version.parse("0.0.0-0"))
++
++
++@pytest.mark.parametrize("operator", ["=>", "==", "~", "^", "!="])
++def test_comparator_rejects_unknown_operator(operator):
++    with pytest.raises(ValueError) as err:
++        Comparator(operator, Version(1, 0, 0))
++    assert str(err.value) == "unknown operator %r" % operator
++
++
++def test_comparator_eq_hash():
++    a = Comparator(">=", Version(1, 0, 0))
++    assert a == Comparator(">=", Version(1, 0, 0))
++    assert a != Comparator(">", Version(1, 0, 0))
++    assert a != Comparator(">=", Version(1, 0, 1))
++    assert a != ">=1.0.0"
++    assert len({a, Comparator(">=", Version(1, 0, 0)), Comparator("", None)}) == 2
++
++
++def test_satisfies_rejects_non_str_range():
++    with pytest.raises(TypeError, match="range expression must be a str, not int"):
++        satisfies("1.0.0", 1)

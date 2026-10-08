@@ -1,0 +1,36 @@
+diff --git a/decouple.py b/decouple.py
+index 152eb1a..4ef3e3f 100644
+--- a/decouple.py
++++ b/decouple.py
+@@ -236,10 +236,12 @@ class AutoConfig(object):
+         self.config = Config(Repository(filename, encoding=self.encoding))
+ 
+     def _caller_path(self):
+-        # MAGIC! Get the caller's module path.
++        # MAGIC! Get the caller's module path: the first frame on the stack
++        # that is not in this module, however many of ours lie in between.
+         frame = sys._getframe()
+-        path = os.path.dirname(frame.f_back.f_back.f_code.co_filename)
+-        return path
++        while frame.f_code.co_filename == __file__:
++            frame = frame.f_back
++        return os.path.dirname(frame.f_code.co_filename)
+ 
+     def get(self, *args, **kwargs):
+         """
+diff --git a/tests/test_autoconfig.py b/tests/test_autoconfig.py
+index f1dd439..3628209 100644
+--- a/tests/test_autoconfig.py
++++ b/tests/test_autoconfig.py
+@@ -107,3 +107,11 @@ def test_autoconfig_no_repository():
+         config('KeyNotInEnvAndNotInRepository')
+ 
+     assert isinstance(config.config.repository, RepositoryEmpty)
++
++
++def test_autoconfig_call_and_get_find_the_callers_env():
++    config = AutoConfig()
++    path = os.path.join(os.path.dirname(__file__), 'autoconfig', 'env', 'project')
++    with patch.object(config, '_caller_path', return_value=path):
++        assert 'ENV' == config('KEY')
++        assert 'ENV' == config.get('KEY')

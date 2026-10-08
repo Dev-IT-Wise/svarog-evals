@@ -1,0 +1,147 @@
+diff --git a/README.rst b/README.rst
+index dd72500..f456346 100644
+--- a/README.rst
++++ b/README.rst
+@@ -51,6 +51,16 @@ fixed maximum size.  When the cache is full, i.e. by adding another
+ item the cache would exceed its maximum size, the cache must choose
+ which item(s) to discard based on a suitable `cache algorithm`_.
+ 
++To make room for a value before inserting it, call ``reserve(size)``.
++It evicts items, in the cache's own order, until ``size`` more units
++fit, and raises ``ValueError`` if ``size`` is negative or larger than
++``maxsize``, in which case nothing is evicted.
++
++.. code-block:: python
++
++   cache = LRUCache(maxsize=10, getsizeof=len)
++   cache.reserve(4)  # evicts least recently used items if needed
++
+ This module provides multiple cache classes based on different cache
+ algorithms, as well as decorators for easily memoizing function and
+ method calls.
+diff --git a/src/cachetools/__init__.py b/src/cachetools/__init__.py
+index c9eecb2..551e9c2 100644
+--- a/src/cachetools/__init__.py
++++ b/src/cachetools/__init__.py
+@@ -152,6 +152,15 @@ class Cache(collections.abc.MutableMapping):
+         self.__size.clear()
+         self.__currsize = 0
+ 
++    def reserve(self, size):
++        """Evict items until a value of `size` fits, without inserting one."""
++        if size < 0:
++            raise ValueError("value size must be non-negative")
++        if size > self.maxsize:
++            raise ValueError("value too large")
++        while self.currsize + size > self.maxsize:
++            self.popitem()
++
+     @property
+     def maxsize(self):
+         """The maximum size of the cache."""
+diff --git a/src/cachetools/__init__.pyi b/src/cachetools/__init__.pyi
+index c7b4d48..2209f7e 100644
+--- a/src/cachetools/__init__.pyi
++++ b/src/cachetools/__init__.pyi
+@@ -52,6 +52,7 @@ class Cache(MutableMapping[_KT, _VT]):
+     @overload
+     def pop(self, key: _KT, default: _VT | _T) -> _VT | _T: ...
+     def setdefault(self, key: _KT, default: _VT | None = None) -> _VT: ...
++    def reserve(self, size: float) -> None: ...
+     @property
+     def maxsize(self) -> float: ...
+     @property
+diff --git a/tests/__init__.py b/tests/__init__.py
+index 2adcc63..c7cb015 100644
+--- a/tests/__init__.py
++++ b/tests/__init__.py
+@@ -42,6 +42,27 @@ class CacheTestMixin(_TestCaseProtocol):
+         self.assertEqual(1, cache.getsizeof(0))
+         self.assertTrue(repr(cache).startswith(cache.__class__.__name__))
+ 
++    def test_reserve(self):
++        cache = self.Cache(maxsize=4)
++        for i in range(4):
++            cache[i] = i
++        self.assertIsNone(cache.reserve(0))
++        self.assertEqual(4, len(cache))
++        cache.reserve(3)
++        self.assertEqual(1, cache.currsize)
++        cache.reserve(4)
++        self.assertEqual(0, len(cache))
++
++    def test_reserve_errors(self):
++        cache = self.Cache(maxsize=3)
++        cache[1] = 1
++        cache[2] = 2
++        with self.assertRaises(ValueError):
++            cache.reserve(4)
++        with self.assertRaises(ValueError):
++            cache.reserve(-1)
++        self.assertEqual(2, len(cache))
++
+     def test_maxsize_negative(self):
+         with self.assertRaises(ValueError):
+             self.Cache(maxsize=-1)
+diff --git a/tests/test_fifo.py b/tests/test_fifo.py
+index e444609..c5cde4e 100644
+--- a/tests/test_fifo.py
++++ b/tests/test_fifo.py
+@@ -66,3 +66,19 @@ class FIFOCacheTest(unittest.TestCase, CacheTestMixin):
+         self.assertEqual(cache[1], "updated")
+         self.assertIn(3, cache)
+         self.assertNotIn(2, cache)
++
++
++class FIFOReserveTest(unittest.TestCase):
++    def test_reserve_evicts_oldest_first(self):
++        cache = FIFOCache(maxsize=3)
++        cache.update({1: 1, 2: 2, 3: 3})
++        cache.reserve(2)
++        self.assertEqual({3}, set(cache))
++
++    def test_reserve_with_getsizeof(self):
++        cache = FIFOCache(maxsize=10, getsizeof=len)
++        cache["a"] = "xxxx"
++        cache["b"] = "yyyy"
++        cache.reserve(5)
++        self.assertEqual({"b"}, set(cache))
++        self.assertEqual(4, cache.currsize)
+diff --git a/tests/test_lru.py b/tests/test_lru.py
+index 1a397d0..c1d571e 100644
+--- a/tests/test_lru.py
++++ b/tests/test_lru.py
+@@ -87,3 +87,12 @@ class LRUCacheTest(unittest.TestCase, CacheTestMixin):
+         self.assertIn(3, cache)
+         self.assertIn(5, cache)
+         self.assertNotIn(4, cache)
++
++
++class LRUReserveTest(unittest.TestCase):
++    def test_reserve_evicts_least_recently_used(self):
++        cache = LRUCache(maxsize=3)
++        cache.update({1: 1, 2: 2, 3: 3})
++        cache[1]
++        cache.reserve(2)
++        self.assertEqual({1}, set(cache))
+diff --git a/tests/test_ttl.py b/tests/test_ttl.py
+index e023173..9de2044 100644
+--- a/tests/test_ttl.py
++++ b/tests/test_ttl.py
+@@ -245,3 +245,16 @@ class TTLCacheTest(unittest.TestCase, CacheTestMixin):
+         cache.timer.tick()
+         cache.timer.tick()  # past TTL
+         self.assertNotIn(42, cache)
++
++
++class TTLReserveTest(unittest.TestCase):
++    def test_reserve_drops_expired_items_first(self):
++        timer = Timer()
++        cache = TTLCache(maxsize=3, ttl=2, timer=timer)
++        cache[1] = 1
++        timer.tick()
++        cache[2] = 2
++        cache[3] = 3
++        timer.tick()
++        cache.reserve(1)
++        self.assertEqual({2, 3}, set(cache))

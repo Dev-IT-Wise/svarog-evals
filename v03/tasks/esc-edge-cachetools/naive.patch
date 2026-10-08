@@ -1,0 +1,77 @@
+diff --git a/README.rst b/README.rst
+index dd72500..3bf9751 100644
+--- a/README.rst
++++ b/README.rst
+@@ -51,6 +51,15 @@ fixed maximum size.  When the cache is full, i.e. by adding another
+ item the cache would exceed its maximum size, the cache must choose
+ which item(s) to discard based on a suitable `cache algorithm`_.
+ 
++To make room for a value before inserting it, call ``reserve(size)``.
++It evicts items, in the cache's own order, until ``size`` more units
++fit.
++
++.. code-block:: python
++
++   cache = LRUCache(maxsize=10, getsizeof=len)
++   cache.reserve(4)  # evicts least recently used items if needed
++
+ This module provides multiple cache classes based on different cache
+ algorithms, as well as decorators for easily memoizing function and
+ method calls.
+diff --git a/src/cachetools/__init__.py b/src/cachetools/__init__.py
+index c9eecb2..ac8b39a 100644
+--- a/src/cachetools/__init__.py
++++ b/src/cachetools/__init__.py
+@@ -152,6 +152,11 @@ class Cache(collections.abc.MutableMapping):
+         self.__size.clear()
+         self.__currsize = 0
+ 
++    def reserve(self, size):
++        """Evict items until a value of `size` fits, without inserting one."""
++        while self.currsize + size > self.maxsize:
++            self.popitem()
++
+     @property
+     def maxsize(self):
+         """The maximum size of the cache."""
+diff --git a/src/cachetools/__init__.pyi b/src/cachetools/__init__.pyi
+index c7b4d48..2209f7e 100644
+--- a/src/cachetools/__init__.pyi
++++ b/src/cachetools/__init__.pyi
+@@ -52,6 +52,7 @@ class Cache(MutableMapping[_KT, _VT]):
+     @overload
+     def pop(self, key: _KT, default: _VT | _T) -> _VT | _T: ...
+     def setdefault(self, key: _KT, default: _VT | None = None) -> _VT: ...
++    def reserve(self, size: float) -> None: ...
+     @property
+     def maxsize(self) -> float: ...
+     @property
+diff --git a/tests/__init__.py b/tests/__init__.py
+index 2adcc63..8ebfc05 100644
+--- a/tests/__init__.py
++++ b/tests/__init__.py
+@@ -42,6 +42,24 @@ class CacheTestMixin(_TestCaseProtocol):
+         self.assertEqual(1, cache.getsizeof(0))
+         self.assertTrue(repr(cache).startswith(cache.__class__.__name__))
+ 
++    def test_reserve(self):
++        cache = self.Cache(maxsize=4)
++        for i in range(4):
++            cache[i] = i
++        cache.reserve(0)
++        self.assertEqual(4, len(cache))
++        cache.reserve(3)
++        self.assertEqual(1, cache.currsize)
++        cache.reserve(4)
++        self.assertEqual(0, len(cache))
++
++    def test_reserve_getsizeof(self):
++        cache = self.Cache(maxsize=10, getsizeof=len)
++        cache["a"] = "xxxx"
++        cache["b"] = "yyyy"
++        cache.reserve(5)
++        self.assertEqual(1, len(cache))
++
+     def test_maxsize_negative(self):
+         with self.assertRaises(ValueError):
+             self.Cache(maxsize=-1)

@@ -1,0 +1,5 @@
+# Answers for an unattended run, keyed by gate id. The same file for every
+# arm and every task: it pre-approves a short in-chat design and a spike
+# probe, and nothing else. A heavy spec still needs its own hash.
+design.bounded = "yes"
+spike = "yes"

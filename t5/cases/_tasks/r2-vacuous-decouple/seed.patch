@@ -1,0 +1,27 @@
+diff --git a/decouple.py b/decouple.py
+index 9873fc9..152eb1a 100644
+--- a/decouple.py
++++ b/decouple.py
+@@ -241,11 +241,20 @@ class AutoConfig(object):
+         path = os.path.dirname(frame.f_back.f_back.f_code.co_filename)
+         return path
+ 
+-    def __call__(self, *args, **kwargs):
++    def get(self, *args, **kwargs):
++        """
++        Return the value for option or default if defined, like Config.get.
++        """
+         if not self.config:
+             self._load(self.search_path or self._caller_path())
+ 
+-        return self.config(*args, **kwargs)
++        return self.config.get(*args, **kwargs)
++
++    def __call__(self, *args, **kwargs):
++        """
++        Convenient shortcut to get.
++        """
++        return self.get(*args, **kwargs)
+ 
+ 
+ # A pré-instantiated AutoConfig to improve decouple's usability

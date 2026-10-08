@@ -1,0 +1,15 @@
+diff --git a/src/tomli/_parser.py b/src/tomli/_parser.py
+index b87c918..2e4644f 100644
+--- a/src/tomli/_parser.py
++++ b/src/tomli/_parser.py
+@@ -59,8 +59,8 @@ ILLEGAL_MULTILINE_LITERAL_STR_CHARS: Final = ILLEGAL_MULTILINE_BASIC_STR_CHARS
+ 
+ ILLEGAL_COMMENT_CHARS: Final = ILLEGAL_BASIC_STR_CHARS
+ 
+-TOML_WS: Final = frozenset(" ")
+-TOML_WS_AND_NEWLINE: Final = frozenset(" \t\n")
++TOML_WS: Final = frozenset(" \t")
++TOML_WS_AND_NEWLINE: Final = TOML_WS | frozenset("\n")
+ BARE_KEY_CHARS: Final = frozenset(
+     "abcdefghijklmnopqrstuvwxyz" "ABCDEFGHIJKLMNOPQRSTUVWXYZ" "0123456789" "-_"
+ )

@@ -1,0 +1,102 @@
+diff --git a/src/semver/cli.py b/src/semver/cli.py
+index 43e101e..bfda215 100644
+--- a/src/semver/cli.py
++++ b/src/semver/cli.py
+@@ -12,12 +12,24 @@ The result of each command is printed on stdout.
+ 
+ import argparse
+ import sys
+-from typing import cast, List, Optional
++from typing import cast, List, Optional, Tuple
+ 
+ from .version import Version
+ from .__about__ import __version__
+ 
+ 
++def _split_prefix(version: str) -> Tuple[str, str]:
++    """
++    Split a leading "v" or "V", as git tags carry, from a version string.
++
++    :param version: the version string, with or without the prefix
++    :return: the prefix ("" when there is none) and the rest
++    """
++    if version[:1] in ("v", "V"):
++        return version[:1], version[1:]
++    return "", version
++
++
+ def cmd_bump(args: argparse.Namespace) -> str:
+     """
+     Subcommand: Bumps a version.
+@@ -40,10 +52,11 @@ def cmd_bump(args: argparse.Namespace) -> str:
+         # print the help and exit
+         args.parser.parse_args(["bump", "-h"])
+ 
+-    ver = Version.parse(args.version)
++    prefix, version = _split_prefix(args.version)
++    ver = Version.parse(version)
+     # get the respective method and call it
+     func = getattr(ver, maptable[cast(str, args.bump)])
+-    return str(func())
++    return prefix + str(func())
+ 
+ 
+ def cmd_check(args: argparse.Namespace) -> None:
+@@ -54,7 +67,7 @@ def cmd_check(args: argparse.Namespace) -> None:
+ 
+     :param args: The parsed arguments
+     """
+-    if Version.is_valid(args.version):
++    if Version.is_valid(_split_prefix(args.version)[1]):
+         return None
+     raise ValueError("Invalid version %r" % args.version)
+ 
+@@ -67,8 +80,8 @@ def cmd_compare(args: argparse.Namespace) -> str:
+ 
+     :param args: The parsed arguments
+     """
+-    ver1 = Version.parse(args.version1)
+-    return str(ver1.compare(args.version2))
++    ver1 = Version.parse(_split_prefix(args.version1)[1])
++    return str(ver1.compare(Version.parse(_split_prefix(args.version2)[1])))
+ 
+ 
+ def cmd_nextver(args: argparse.Namespace) -> str:
+@@ -79,8 +92,8 @@ def cmd_nextver(args: argparse.Namespace) -> str:
+ 
+     :param args: The parsed arguments
+     """
+-    version = Version.parse(args.version)
+-    return str(version.next_version(args.part))
++    prefix, version = _split_prefix(args.version)
++    return prefix + str(Version.parse(version).next_version(args.part))
+ 
+ 
+ def createparser() -> argparse.ArgumentParser:
+diff --git a/tests/test_pysemver-cli.py b/tests/test_pysemver-cli.py
+index 5a0a2f8..b16bc06 100644
+--- a/tests/test_pysemver-cli.py
++++ b/tests/test_pysemver-cli.py
+@@ -142,3 +142,22 @@ def test_main_file_should_call_cli_main(package_name):
+         with patch("semver.__main__.__package__", package_name):
+             __main__.main()
+             mocked_main.assert_called_once()
++
++
++@pytest.mark.parametrize(
++    "cli,expected",
++    [
++        (["bump", "patch", "v1.2.3"], "v1.2.4"),
++        (["bump", "minor", "V1.2.3"], "V1.3.0"),
++        (["nextver", "v1.2.3", "minor"], "v1.3.0"),
++        (["compare", "v1.2.3", "1.2.4"], "-1"),
++        (["compare", "1.2.3", "v1.2.3"], "0"),
++    ],
++)
++def test_should_accept_a_v_prefix(capsys, cli, expected):
++    assert main(cli) == 0
++    assert capsys.readouterr().out.strip() == expected
++
++
++def test_check_should_accept_a_v_prefix():
++    assert main(["check", "v1.2.3"]) == 0

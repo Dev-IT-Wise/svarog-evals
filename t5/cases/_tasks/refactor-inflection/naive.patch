@@ -1,0 +1,55 @@
+diff --git a/inflection/__init__.py b/inflection/__init__.py
+index ffac5ce..f841cfe 100644
+--- a/inflection/__init__.py
++++ b/inflection/__init__.py
+@@ -284,6 +284,19 @@ def parameterize(string: str, separator: str = '-') -> str:
+     return string.lower()
+ 
+ 
++def _inflect(word: str, rules: RegexReplaceList) -> str:
++    """Skip uncountable words, then apply the first rule that matches."""
++    if not word:
++        return word
++    for inflection in UNCOUNTABLES:
++        if re.search(r'(?i)\b(%s)\Z' % inflection, word):
++            return word
++    for rule, replacement in rules:
++        if re.search(rule, word):
++            return re.sub(rule, replacement, word)
++    return word
++
++
+ def pluralize(word: str) -> str:
+     """
+     Return the plural form of a word.
+@@ -300,13 +313,7 @@ def pluralize(word: str) -> str:
+         'CamelOctopi'
+ 
+     """
+-    if not word or word.lower() in UNCOUNTABLES:
+-        return word
+-    else:
+-        for rule, replacement in PLURALS:
+-            if re.search(rule, word):
+-                return re.sub(rule, replacement, word)
+-        return word
++    return _inflect(word, PLURALS)
+ 
+ 
+ def singularize(word: str) -> str:
+@@ -327,14 +334,7 @@ def singularize(word: str) -> str:
+         'CamelOctopus'
+ 
+     """
+-    for inflection in UNCOUNTABLES:
+-        if re.search(r'(?i)\b(%s)\Z' % inflection, word):
+-            return word
+-
+-    for rule, replacement in SINGULARS:
+-        if re.search(rule, word):
+-            return re.sub(rule, replacement, word)
+-    return word
++    return _inflect(word, SINGULARS)
+ 
+ 
+ def tableize(word: str) -> str:

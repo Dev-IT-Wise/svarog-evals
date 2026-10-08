@@ -1,0 +1,76 @@
+diff --git a/decouple.py b/decouple.py
+index 9873fc9..abe2e6a 100644
+--- a/decouple.py
++++ b/decouple.py
+@@ -106,6 +106,18 @@ class Config(object):
+         """
+         return self.get(*args, **kwargs)
+ 
++    def export(self, schema):
++        """
++        Resolve every option of schema and export it to os.environ.
++        """
++        values = {}
++        for name, options in schema.items():
++            value = self.get(name, **(options or {}))
++            if name not in os.environ:
++                os.environ[name] = str(value)
++            values[name] = value
++        return values
++
+ 
+ class RepositoryEmpty(object):
+     def __init__(self, source='', encoding=DEFAULT_ENCODING):
+@@ -247,6 +259,12 @@ class AutoConfig(object):
+ 
+         return self.config(*args, **kwargs)
+ 
++    def export(self, schema):
++        if not self.config:
++            self._load(self.search_path or self._caller_path())
++
++        return self.config.export(schema)
++
+ 
+ # A pré-instantiated AutoConfig to improve decouple's usability
+ # now just import config and start using with no configuration.
+diff --git a/tests/test_export.py b/tests/test_export.py
+new file mode 100644
+index 0000000..6ed02cf
+--- /dev/null
++++ b/tests/test_export.py
+@@ -0,0 +1,34 @@
++# coding: utf-8
++import os
++from unittest.mock import patch
++
++import pytest
++from decouple import AutoConfig, Config, UndefinedValueError
++
++
++@pytest.fixture(autouse=True)
++def clean_env():
++    with patch.dict(os.environ):
++        yield
++
++
++def test_export_returns_cast_values_and_sets_environment():
++    config = Config({'EXP_PORT': '80'})
++    out = config.export({'EXP_PORT': {'cast': int}, 'EXP_X': {'default': 'x'}})
++    assert out == {'EXP_PORT': 80, 'EXP_X': 'x'}
++    assert os.environ['EXP_PORT'] == '80'
++
++
++def test_export_missing_option_raises():
++    with pytest.raises(UndefinedValueError, match='EXP_B'):
++        Config({}).export({'EXP_B': None})
++
++
++def test_export_bad_cast_raises():
++    with pytest.raises(ValueError):
++        Config({'EXP_N': 'abc'}).export({'EXP_N': {'cast': int}})
++
++
++def test_autoconfig_export(tmp_path):
++    (tmp_path / '.env').write_text('EXP_PORT=9\n')
++    assert AutoConfig(search_path=str(tmp_path)).export({'EXP_PORT': {'cast': int}}) == {'EXP_PORT': 9}

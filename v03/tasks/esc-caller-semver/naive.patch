@@ -1,0 +1,116 @@
+diff --git a/changelog.d/+partial-operands.feature.rst b/changelog.d/+partial-operands.feature.rst
+new file mode 100644
+index 0000000..58c7126
+--- /dev/null
++++ b/changelog.d/+partial-operands.feature.rst
+@@ -0,0 +1 @@
++Comparisons and ``Version.match`` accept short versions such as ``1.2`` as the other operand, with missing parts taken as zero.
+diff --git a/src/semver/version.py b/src/semver/version.py
+index 75e73be..c6d1150 100644
+--- a/src/semver/version.py
++++ b/src/semver/version.py
+@@ -469,10 +469,12 @@ build='build.10')
+         1
+         >>> Version.parse("2.0.0").compare("2.0.0")
+         0
++        >>> Version.parse("1.2.0").compare("1.2")
++        0
+         """
+         cls = type(self)
+         if isinstance(other, String.__args__):  # type: ignore
+-            other = cls.parse(other)
++            other = cls.parse(other, optional_minor_and_patch=True)
+         elif isinstance(other, dict):
+             other = cls(**other)
+         elif isinstance(other, (tuple, list)):
+diff --git a/tests/test_compare.py b/tests/test_compare.py
+index dffa98b..264f664 100644
+--- a/tests/test_compare.py
++++ b/tests/test_compare.py
+@@ -276,7 +276,7 @@ def test_should_compare_version_string(s):
+     assert not s == v0
+ 
+ 
+-@pytest.mark.parametrize("s", ("1", "1.0", "1.0.x"))
++@pytest.mark.parametrize("s", ("1.0.x",))
+ def test_should_not_allow_to_compare_invalid_versionstring(s):
+     v = Version(major=3, minor=4, patch=5, prerelease="pre.2", build="build.4")
+     with pytest.raises(ValueError):
+diff --git a/tests/test_partial_operands.py b/tests/test_partial_operands.py
+new file mode 100644
+index 0000000..a1e1f96
+--- /dev/null
++++ b/tests/test_partial_operands.py
+@@ -0,0 +1,72 @@
++# SPDX-License-Identifier: MIT
++import pytest
++
++from semver import Version
++
++
++@pytest.mark.parametrize(
++    "left,right,expected",
++    [
++        ("1.2.0", "1.2", 0),
++        ("1.0.0", "1", 0),
++        ("1.2.3", "1.2", 1),
++        ("1.1.9", "1.2", -1),
++        ("2.0.0", "1", 1),
++        ("1.2.0-rc.1", "1.2", -1),
++        ("1.2.0-rc.1", "1.2-rc.1", 0),
++        ("1.2.0+build.1", "1.2+build.2", 0),
++    ],
++)
++def test_compare_short_operand(left, right, expected):
++    assert Version.parse(left).compare(right) == expected
++    assert Version.parse(left).compare(right.encode()) == expected
++
++
++@pytest.mark.parametrize(
++    "op,expected",
++    [
++        ("==", True), ("!=", False), ("<", False), ("<=", True), (">", False), (">=", True),
++    ],
++)
++def test_operators_short_operand(op, expected):
++    left = Version.parse("1.2.0")
++    assert eval("left %s '1.2'" % op) is expected
++    assert eval("'1.2' %s left" % op) is expected
++
++
++@pytest.mark.parametrize(
++    "version,expr,expected",
++    [
++        ("1.2.3", ">=1.2", True),
++        ("1.2.3", "<2", True),
++        ("1.2.3", "<1.2", False),
++        ("1.2.0", "1.2", True),
++        ("1.2.3", "1.2", False),
++        ("1.2.3", "!=2", True),
++        ("2.0.0", "==2", True),
++        ("2.0.0", "<=2", True),
++        ("2.0.1", "<=2", False),
++    ],
++)
++def test_match_short_operand(version, expr, expected):
++    assert Version.parse(version).match(expr) is expected
++
++
++@pytest.mark.parametrize("operand", ["", "garbage", "1.", "1.2.3.4", "01.2.3", "1.2.x", "v1.2"])
++def test_invalid_operand_message_unchanged(operand):
++    with pytest.raises(ValueError, match="is not valid SemVer string"):
++        Version.parse("1.2.3").compare(operand)
++
++
++def test_parse_and_is_valid_stay_strict():
++    with pytest.raises(ValueError):
++        Version.parse("1.2")
++    assert not Version.is_valid("1.2")
++
++
++def test_subclass_without_override():
++    class Sub(Version):
++        pass
++
++    assert Sub.parse("1.2.0").compare("1.2") == 0
++    assert Sub.parse("1.2.3").match(">=1.2")

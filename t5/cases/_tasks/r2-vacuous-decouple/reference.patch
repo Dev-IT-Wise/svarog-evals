@@ -1,0 +1,48 @@
+diff --git a/decouple.py b/decouple.py
+index 152eb1a..4ef3e3f 100644
+--- a/decouple.py
++++ b/decouple.py
+@@ -236,10 +236,12 @@ class AutoConfig(object):
+         self.config = Config(Repository(filename, encoding=self.encoding))
+ 
+     def _caller_path(self):
+-        # MAGIC! Get the caller's module path.
++        # MAGIC! Get the caller's module path: the first frame on the stack
++        # that is not in this module, however many of ours lie in between.
+         frame = sys._getframe()
+-        path = os.path.dirname(frame.f_back.f_back.f_code.co_filename)
+-        return path
++        while frame.f_code.co_filename == __file__:
++            frame = frame.f_back
++        return os.path.dirname(frame.f_code.co_filename)
+ 
+     def get(self, *args, **kwargs):
+         """
+diff --git a/tests/test_autoconfig.py b/tests/test_autoconfig.py
+index f1dd439..6e65083 100644
+--- a/tests/test_autoconfig.py
++++ b/tests/test_autoconfig.py
+@@ -107,3 +107,23 @@ def test_autoconfig_no_repository():
+         config('KeyNotInEnvAndNotInRepository')
+ 
+     assert isinstance(config.config.repository, RepositoryEmpty)
++
++
++def test_autoconfig_finds_env_next_to_the_calling_module(tmp_path, monkeypatch):
++    """
++    AutoConfig searches from the directory of the module that calls it,
++    whether the instance is called or its get() is. Nothing is patched: the
++    caller is a real module in a directory with its own .env.
++    """
++    import importlib.util
++    monkeypatch.delenv('T5_REGRESSION_KEY', raising=False)
++    (tmp_path / '.env').write_text('T5_REGRESSION_KEY=found\n')
++    (tmp_path / 'settings.py').write_text(
++        'from decouple import AutoConfig\n'
++        'VIA_CALL = AutoConfig()("T5_REGRESSION_KEY", default="missing")\n'
++        'VIA_GET = AutoConfig().get("T5_REGRESSION_KEY", default="missing")\n'
++    )
++    spec = importlib.util.spec_from_file_location('t5_settings', str(tmp_path / 'settings.py'))
++    mod = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(mod)
++    assert (mod.VIA_CALL, mod.VIA_GET) == ('found', 'found')
