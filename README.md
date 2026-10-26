@@ -2,7 +2,7 @@
 # svarog-evals
 
 Task corpora for the measurements of
-[svarog](https://github.com/TheArkadiuszGrzelka/svarog). They live here so the
+[svarog](https://github.com/Dev-IT-Wise/svarog). They live here so the
 plugin itself stays small; the harness, the method and every report stay in
 the svarog repository under `docs/svarog/evals/`.
 
@@ -16,8 +16,8 @@ the svarog repository under `docs/svarog/evals/`.
 Check this repository out next to svarog, or point `SVAROG_EVALS` at it:
 
 ```
-git clone https://github.com/TheArkadiuszGrzelka/svarog.git
-git clone https://github.com/TheArkadiuszGrzelka/svarog-evals.git
+git clone https://github.com/Dev-IT-Wise/svarog.git
+git clone https://github.com/Dev-IT-Wise/svarog-evals.git
 svarog/docs/svarog/evals/t5/stage.sh /tmp/t5-stage
 SVAROG_EVALS=/elsewhere/svarog-evals svarog/docs/svarog/evals/v03/driver.py prove
 ```
